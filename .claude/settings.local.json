@@ -1,0 +1,12 @@
+{
+  "permissions": {
+    "allow": [
+      "WebFetch(domain:github.com)",
+      "WebFetch(domain:raw.githubusercontent.com)",
+      "Bash(jar tf:*)",
+      "Bash(javap:*)",
+      "Bash(jar xf:*)",
+      "Bash(./gradlew compileJava:*)"
+    ]
+  }
+}
