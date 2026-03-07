@@ -66,9 +66,11 @@ public final class BarRenderer
 		double progress, Color barColor, boolean lighten)
 	{
 		int sw = Math.max(1, (int) Math.round(w * clamp(progress)));
-		applyCompositeRect(g, x, y, sw, h, lighten);
-		// Vertical leading-edge pulse line
+		Composite orig = g.getComposite();
 		g.setColor(pulse(barColor, lighten));
+		g.fillRect(x, y, sw - 1, h);
+		g.setComposite(orig);
+		// Vertical leading-edge pulse line
 		g.drawLine(x + sw - 1, y, x + sw - 1, y + h - 1);
 	}
 

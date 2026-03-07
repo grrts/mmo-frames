@@ -9,17 +9,16 @@ import lombok.Getter;
 import lombok.extern.slf4j.Slf4j;
 import net.runelite.api.*;
 import net.runelite.api.gameval.VarPlayerID;
-import net.runelite.api.kit.KitType;
+import net.runelite.api.events.ClientTick;
 import net.runelite.api.events.GameStateChanged;
 import net.runelite.api.events.GameTick;
 import net.runelite.api.events.HitsplatApplied;
-import net.runelite.api.events.ItemContainerChanged;
 import net.runelite.api.events.NpcDespawned;
 import net.runelite.api.events.StatChanged;
 import com.mmoframes.status.NpcStatusTracker;
+import net.runelite.client.callback.ClientThread;
 import net.runelite.client.config.ConfigManager;
 import net.runelite.client.eventbus.Subscribe;
-import net.runelite.client.util.AsyncBufferedImage;
 import net.runelite.client.game.ItemManager;
 import net.runelite.client.game.ItemStats;
 import net.runelite.client.plugins.Plugin;
@@ -125,12 +124,14 @@ public class MmoFramesPlugin extends Plugin
 		Skill.RANGED, Skill.MAGIC, Skill.PRAYER, Skill.HITPOINTS
 	};
 
-	@Inject private Client client;
+	@Inject private Client          client;
+	@Inject private ClientThread    clientThread;
 	@Inject private MmoFramesConfig config;
-	@Inject private OverlayManager overlayManager;
-	@Inject private ItemManager itemManager;
+	@Inject private OverlayManager  overlayManager;
+	@Inject private ItemManager     itemManager;
 	@Inject private PlayerFrameOverlay playerFrameOverlay;
 	@Inject private TargetFrameOverlay targetFrameOverlay;
+	@Inject private ChatHeadService    chatHeadService;
 
 	// ---- Tick sweep state (0.0–1.0), read by overlays ----------------------
 
@@ -152,9 +153,10 @@ public class MmoFramesPlugin extends Plugin
 	private int lingerTicksRemaining;
 	private Actor lastPortraitTarget;
 
-	// ---- Portraits (Feature 2) ---------------------------------------------
+	// ---- Player chat-head portrait (managed by ChatHeadService) ------------
 
-	@Getter private volatile BufferedImage playerPortrait;
+	// ---- Target portrait (item icon for player targets) --------------------
+
 	@Getter private volatile BufferedImage targetPortrait;
 
 	// ---- Poison / venom state (Feature 6) ----------------------------------
@@ -184,6 +186,7 @@ public class MmoFramesPlugin extends Plugin
 		overlayManager.add(playerFrameOverlay);
 		overlayManager.add(targetFrameOverlay);
 		resetState();
+		chatHeadService.startUp();
 		log.info("MMO Frames started");
 	}
 
@@ -192,6 +195,7 @@ public class MmoFramesPlugin extends Plugin
 	{
 		overlayManager.remove(playerFrameOverlay);
 		overlayManager.remove(targetFrameOverlay);
+		chatHeadService.shutDown();
 		log.info("MMO Frames stopped");
 	}
 
@@ -208,8 +212,10 @@ public class MmoFramesPlugin extends Plugin
 			}
 			else
 			{
-				// True login or world-hop — full reset
+				// True login or world-hop — full reset then recreate portrait widget.
+				// onGameStateChanged is dispatched on the client thread, so it's safe.
 				resetState();
+				chatHeadService.resetOnClientThread();
 			}
 		}
 		lastGameState = newState;
@@ -259,17 +265,6 @@ public class MmoFramesPlugin extends Plugin
 		tickHpRegen();
 		tickPrayerDrain();
 		tickSpecRegen();
-	}
-
-	// ---- Equipment container change (Feature 2) ----------------------------
-
-	@Subscribe
-	public void onItemContainerChanged(ItemContainerChanged event)
-	{
-		if (event.getContainerId() == InventoryID.EQUIPMENT.getId())
-		{
-			refreshPlayerPortrait();
-		}
 	}
 
 	// ---- Skill boosts (Feature 8) ------------------------------------------
@@ -420,27 +415,16 @@ public class MmoFramesPlugin extends Plugin
 		specRegenProgress = (double) specRegenTick / SPEC_REGEN_TICKS;
 	}
 
-	// ---- Portrait refresh helpers (Feature 2) ------------------------------
+	// ---- Chat-head portrait (delegated to ChatHeadService) -----------------
 
-	private void refreshPlayerPortrait()
+	/** Forwards client tick to the service so it can update widget position + schedule capture. */
+	@Subscribe
+	public void onClientTick(ClientTick tick)
 	{
-		ItemContainer equip = client.getItemContainer(InventoryID.EQUIPMENT);
-		if (equip == null)
-		{
-			playerPortrait = null;
-			return;
-		}
-
-		Item headItem = equip.getItem(EquipmentInventorySlot.HEAD.getSlotIdx());
-		if (headItem == null || headItem.getId() <= 0)
-		{
-			playerPortrait = null;
-			return;
-		}
-
-		AsyncBufferedImage img = itemManager.getImage(headItem.getId(), 1, false);
-		img.onLoaded(() -> playerPortrait = img);
+		chatHeadService.onClientTick();
 	}
+
+	// ---- Target portrait (item icon for player targets) --------------------
 
 	private void refreshTargetPortrait(Actor target)
 	{
@@ -449,12 +433,11 @@ public class MmoFramesPlugin extends Plugin
 			PlayerComposition pc = ((Player) target).getPlayerComposition();
 			if (pc != null)
 			{
-				// Kit IDs >= ITEM_OFFSET indicate equipped items; subtract offset to get item ID
-				int kitId = pc.getEquipmentId(KitType.HEAD);
+				int kitId = pc.getEquipmentIds()[net.runelite.api.kit.KitType.HEAD.getIndex()];
 				if (kitId >= PlayerComposition.ITEM_OFFSET)
 				{
 					int itemId = kitId - PlayerComposition.ITEM_OFFSET;
-					AsyncBufferedImage img = itemManager.getImage(itemId, 1, false);
+					net.runelite.client.util.AsyncBufferedImage img = itemManager.getImage(itemId, 1, false);
 					img.onLoaded(() -> targetPortrait = img);
 					return;
 				}
@@ -474,7 +457,6 @@ public class MmoFramesPlugin extends Plugin
 		lingerTarget = null;
 		lingerTicksRemaining = 0;
 		lastPortraitTarget = null;
-		playerPortrait = null;
 		targetPortrait = null;
 		poisonState = 0;
 		if (skillBoosts != null) skillBoosts.clear();
@@ -482,8 +464,9 @@ public class MmoFramesPlugin extends Plugin
 
 	/**
 	 * Partial reset for teleports (LOADING → LOGGED_IN).
-	 * Clears positional state (linger target, portraits) but preserves
+	 * Clears positional state (linger target, target portrait) but preserves
 	 * skill boosts and poison state, which persist through within-world teleports.
+	 * The chat-head widget persists through teleports since the interface stays loaded.
 	 */
 	private void resetForTeleport()
 	{
@@ -495,7 +478,7 @@ public class MmoFramesPlugin extends Plugin
 		lingerTicksRemaining = 0;
 		lastPortraitTarget = null;
 		targetPortrait = null;
-		// playerPortrait preserved — equipment didn't change
+		// chatHeadWidget preserved — interface stays loaded through teleports
 		// skillBoosts preserved — boosts persist through teleports
 		// poisonState preserved — poison/venom persists through teleports
 	}

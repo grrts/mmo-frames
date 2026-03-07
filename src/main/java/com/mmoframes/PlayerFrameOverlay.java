@@ -50,6 +50,7 @@ public class PlayerFrameOverlay extends Overlay
 	private final MmoFramesConfig config;
 	private final MmoFramesPlugin plugin;
 	private final SpriteManager   spriteManager;
+	private final ChatHeadService chatHeadService;
 
 	// Optional — available only when the ItemStats plugin is active
 	@com.google.inject.Inject(optional = true)
@@ -75,12 +76,13 @@ public class PlayerFrameOverlay extends Overlay
 
 	@Inject
 	public PlayerFrameOverlay(Client client, MmoFramesConfig config, MmoFramesPlugin plugin,
-		SpriteManager spriteManager)
+		SpriteManager spriteManager, ChatHeadService chatHeadService)
 	{
-		this.client             = client;
-		this.config             = config;
-		this.plugin             = plugin;
-		this.spriteManager      = spriteManager;
+		this.client          = client;
+		this.config          = config;
+		this.plugin          = plugin;
+		this.spriteManager   = spriteManager;
+		this.chatHeadService = chatHeadService;
 		this.playerPoisonEffect = new PlayerPoisonEffect(client);
 		this.staminaEffect      = new StaminaEffect(client, spriteManager);
 
@@ -173,6 +175,16 @@ public class PlayerFrameOverlay extends Overlay
 		                     : pState > 0               ? hpIconPoison
 		                                                : hpIconNormal;
 
+		// ── Position the chat-head widget at the portrait inner area ─────────
+		// The overlay avoids painting over that area (portraitWidget=true), so the
+		// widget's pixels show through the hole left in the frame's interior fill.
+		AffineTransform tx = g.getTransform();
+		int overlayX = (int) Math.round(tx.getTranslateX());
+		int overlayY = (int) Math.round(tx.getTranslateY());
+		// Portrait inner origin = overlay origin + (BORDER + PAD) + BORDER = 2*BORDER + PAD = 18
+		int innerOff = UnitFrameRenderer.BORDER * 2 + UnitFrameRenderer.PAD;
+		chatHeadService.requestPosition(overlayX + innerOff, overlayY + innerOff);
+
 		// ── Main frame always at (0,0) — anchor is stable regardless of effects ─
 		UnitFrameRenderer.renderFrame(
 			g,
@@ -190,8 +202,8 @@ public class PlayerFrameOverlay extends Overlay
 			showPrayer,
 			showStamina,
 			client.getVarbitValue(VarbitID.STAMINA_ACTIVE) != 0,
-			plugin.getPlayerPortrait(),
-			null,  // no tint for player portrait fallback
+			chatHeadService.getImage(), // captured chathead (or null → fallback letter)
+			null,
 			pState,
 			healHp,
 			healPrayer,

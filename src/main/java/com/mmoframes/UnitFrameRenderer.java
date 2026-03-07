@@ -31,6 +31,7 @@ public class UnitFrameRenderer
 	public static final int PORTRAIT_W = 60;
 	public static final int PORTRAIT_H = 60;
 	public static final int MAIN_BAR_H = 20;
+	public static final int SWEEP_BAR_H = 4;
 	public static final int THIN_BAR_H = 10;
 	public static final int BAR_GAP    = 4;
 	public static final int NAME_H     = 16;
@@ -111,11 +112,11 @@ public class UnitFrameRenderer
 		boolean showSpec = specPct >= 0;
 
 		// ── 1. Main frame body ────────────────────────────────────────────────
+		int portX = BORDER + PAD;
+		int portY = BORDER + PAD;
 		BorderRenderer.drawFrame(g, 0, 0, mainW, frameH);
 
 		// ── 2. Portrait ───────────────────────────────────────────────────────
-		int portX = BORDER + PAD;
-		int portY = BORDER + PAD;
 		BorderRenderer.drawFrame(g, portX, portY, PORTRAIT_W, PORTRAIT_H);
 		drawPortrait(g, portX, portY, name, portrait, portraitBgColor);
 
@@ -138,7 +139,7 @@ public class UnitFrameRenderer
 		BarRenderer.drawBar(g, cx, cy, cw, MAIN_BAR_H, hpFrac, hpCol);
 		if (cfg.showHpRegenSweep() && hpSweep > 0 && hpFrac < 1.0)
 		{
-			BarRenderer.drawSweepH(g, cx, cy, cw, MAIN_BAR_H, hpSweep, hpCol, true);
+			BarRenderer.drawSweepH(g, cx, (cy + MAIN_BAR_H - SWEEP_BAR_H), cw, SWEEP_BAR_H, hpSweep, hpCol, true);
 		}
 		// Heart icon at the left of the HP bar (normal / poison / venom)
 		int iconSize = MAIN_BAR_H - 6; // 14 px — slightly smaller with padding
@@ -165,7 +166,7 @@ public class UnitFrameRenderer
 			BarRenderer.drawBar(g, cx, cy, cw, MAIN_BAR_H, pFrac, pCol);
 			if (cfg.showPrayerDrainSweep() && praySweep > 0 && curPray > 0)
 			{
-				BarRenderer.drawSweepH(g, cx, cy, cw, MAIN_BAR_H, praySweep, pCol, false);
+				BarRenderer.drawSweepH(g, cx, (cy + MAIN_BAR_H - SWEEP_BAR_H), cw, SWEEP_BAR_H, praySweep, pCol, false);
 			}
 			if (prayerBarIcon != null)
 			{
