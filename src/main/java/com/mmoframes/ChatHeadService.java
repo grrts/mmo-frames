@@ -32,6 +32,10 @@ public class ChatHeadService
 	static final int SIZE = 48;
 
 	private static final int MODEL_ZOOM = 600;
+	private static final int CHATHEAD_IDLE_ANIM = 588;
+
+	/** Interior fill colour matching {@link com.mmoframes.rendering.BorderRenderer#INTERIOR}. */
+	private static final int BG_COLOR_RGB = 0x25201C; // rgb(37, 32, 28)
 
 	@Inject private Client       client;
 	@Inject private ClientThread clientThread;
@@ -39,6 +43,7 @@ public class ChatHeadService
 
 	// The MODEL widget the game renders every frame
 	private Widget widget;
+	private Widget widgetBg;     // solid background behind the chathead model
 	private Widget widgetParent;
 
 	// Captured portrait image — written on the render thread, read by the overlay
@@ -120,8 +125,21 @@ public class ChatHeadService
 				}
 			}
 
-			widget.setOriginalX(pendingX - offsetX);
-			widget.setOriginalY(pendingY - offsetY);
+			int relX = pendingX - offsetX;
+			int relY = pendingY - offsetY;
+
+			// Position background fill at the same location
+			if (widgetBg != null)
+			{
+				widgetBg.setOriginalX(relX);
+				widgetBg.setOriginalY(relY);
+				widgetBg.setOriginalWidth(SIZE);
+				widgetBg.setOriginalHeight(SIZE);
+				widgetBg.revalidate();
+			}
+
+			widget.setOriginalX(relX);
+			widget.setOriginalY(relY);
 			widget.setOriginalWidth(SIZE);
 			widget.setOriginalHeight(SIZE);
 			widget.revalidate();
@@ -148,9 +166,9 @@ public class ChatHeadService
 	 * DrawManager callback — fires on the render thread after the game frame
 	 * is fully drawn (widgets included) and before RuneLite overlays render.
 	 *
-	 * Uses the {@code drawImage} overload that accepts source/destination rectangles
-	 * so it works with any {@link Image} subtype (BufferedImage in software mode,
-	 * VolatileImage or wrapped image in GPU mode — no cast required).
+	 * Handles potential resolution differences between canvas coordinates (used
+	 * for widget positioning / overlay transforms) and the DrawManager frame
+	 * buffer (which may differ with GPU plugin or stretched mode).
 	 */
 	private void captureFrame(Image img, int sx, int sy)
 	{
@@ -159,6 +177,30 @@ public class ChatHeadService
 		if (img == null)
 		{
 			return;
+		}
+
+		int imgW = img.getWidth(null);
+		int imgH = img.getHeight(null);
+		if (imgW <= 0 || imgH <= 0)
+		{
+			return;
+		}
+
+		// Scale capture coordinates if frame buffer resolution differs from canvas
+		int canvasW = client.getCanvasWidth();
+		int canvasH = client.getCanvasHeight();
+		double scaleX = canvasW > 0 ? (double) imgW / canvasW : 1.0;
+		double scaleY = canvasH > 0 ? (double) imgH / canvasH : 1.0;
+
+		int adjSx = (int) Math.round(sx * scaleX);
+		int adjSy = (int) Math.round(sy * scaleY);
+		int adjW  = (int) Math.round(SIZE * scaleX);
+		int adjH  = (int) Math.round(SIZE * scaleY);
+
+		// Bounds check — skip if capture region falls outside the image
+		if (adjSx < 0 || adjSy < 0 || adjSx + adjW > imgW || adjSy + adjH > imgH)
+		{
+			return; // keep previous captured image
 		}
 
 		BufferedImage copy = new BufferedImage(SIZE, SIZE, BufferedImage.TYPE_INT_ARGB);
@@ -170,7 +212,7 @@ public class ChatHeadService
 			// Works with any Image subtype — no cast to BufferedImage needed.
 			g.drawImage(img,
 				0, 0, SIZE, SIZE,
-				sx, sy, sx + SIZE, sy + SIZE,
+				adjSx, adjSy, adjSx + adjW, adjSy + adjH,
 				null);
 		}
 		finally
@@ -208,9 +250,24 @@ public class ChatHeadService
 		}
 
 		widgetParent = parent;
+
+		// Background fill — renders behind the chathead model so the captured region
+		// shows the head on a dark background instead of game scene bleed-through.
+		widgetBg = parent.createChild(-1, WidgetType.GRAPHIC);
+		widgetBg.setFilled(true);
+		widgetBg.setOpacity(255);
+		widgetBg.setTextColor(BG_COLOR_RGB);
+		widgetBg.setOriginalX(-SIZE * 2);
+		widgetBg.setOriginalY(-SIZE * 2);
+		widgetBg.setOriginalWidth(SIZE);
+		widgetBg.setOriginalHeight(SIZE);
+		widgetBg.revalidate();
+
+		// Chathead model widget — created after background so it renders on top.
 		widget = parent.createChild(-1, WidgetType.MODEL);
 		widget.setModelType(WidgetModelType.LOCAL_PLAYER_CHATHEAD);
 		widget.setModelId(0);
+		widget.setAnimationId(CHATHEAD_IDLE_ANIM);
 		widget.setModelZoom(MODEL_ZOOM);
 		widget.setRotationX(0);
 		widget.setRotationY(0);
@@ -227,6 +284,12 @@ public class ChatHeadService
 
 	private void destroyWidget()
 	{
+		if (widgetBg != null)
+		{
+			widgetBg.setHidden(true);
+			widgetBg.revalidate();
+			widgetBg = null;
+		}
 		if (widget != null)
 		{
 			widget.setHidden(true);
