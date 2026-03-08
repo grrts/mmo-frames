@@ -2,10 +2,13 @@ package com.mmoframes;
 
 import com.mmoframes.StatusFrameRenderer;
 import com.mmoframes.status.ActivePrayerEffect;
+import com.mmoframes.status.AntipoisonImmunityEffect;
 import com.mmoframes.status.PlayerPoisonEffect;
 import com.mmoframes.status.SkillBoostEffect;
 import com.mmoframes.status.StaminaEffect;
 import com.mmoframes.status.StatusEffect;
+import com.mmoframes.status.VarbitTimerEffect;
+import java.awt.Color;
 import java.awt.Dimension;
 import java.awt.Graphics2D;
 import java.awt.geom.AffineTransform;
@@ -56,10 +59,12 @@ public class PlayerFrameOverlay extends Overlay
 	@com.google.inject.Inject(optional = true)
 	private ItemStatChangesService itemStatChanges;
 
-	private final PlayerPoisonEffect     playerPoisonEffect;
-	private final StaminaEffect          staminaEffect;
-	private final List<ActivePrayerEffect> prayerEffects   = new ArrayList<>();
-	private final List<SkillBoostEffect>   skillBoostEffects = new ArrayList<>();
+	private final PlayerPoisonEffect        playerPoisonEffect;
+	private final AntipoisonImmunityEffect antipoisonImmunityEffect;
+	private final StaminaEffect            staminaEffect;
+	private final List<VarbitTimerEffect>   potionEffects = new ArrayList<>();
+	private final List<ActivePrayerEffect>  prayerEffects   = new ArrayList<>();
+	private final List<SkillBoostEffect>    skillBoostEffects = new ArrayList<>();
 
 	// HP bar heart icons — lazy loaded
 	private static final int VENOM_THRESHOLD = 1_000_000;
@@ -83,8 +88,10 @@ public class PlayerFrameOverlay extends Overlay
 		this.plugin          = plugin;
 		this.spriteManager   = spriteManager;
 		this.chatHeadService = chatHeadService;
-		this.playerPoisonEffect = new PlayerPoisonEffect(client);
-		this.staminaEffect      = new StaminaEffect(client, spriteManager);
+		this.playerPoisonEffect       = new PlayerPoisonEffect(client);
+		this.antipoisonImmunityEffect = new AntipoisonImmunityEffect(client);
+		this.staminaEffect            = new StaminaEffect(client, spriteManager);
+		initPotionEffects();
 
 		setPosition(OverlayPosition.BOTTOM_LEFT);
 		setLayer(OverlayLayer.ABOVE_SCENE);
@@ -258,18 +265,24 @@ public class PlayerFrameOverlay extends Overlay
 	}
 
 	/**
-	 * Builds the combined list of status effects to render below the player frame.
-	 * Order: poison/venom first, then any active skill boosts/drains.
+	 * Builds the combined list of status effects to render on the player frame.
+	 * Order: poison/venom, antipoison immunity, stamina, potion buffs, prayers, skill boosts.
 	 */
 	private List<StatusEffect> buildStatusEffects()
 	{
 		List<StatusEffect> list = new ArrayList<>();
 
-		// Poison / venom
+		// Poison / venom (negative)
 		list.add(playerPoisonEffect);
+
+		// Antipoison / anti-venom immunity (positive)
+		list.add(antipoisonImmunityEffect);
 
 		// Stamina potion buff (positive)
 		list.add(staminaEffect);
+
+		// All potion / spell buff effects (positive)
+		list.addAll(potionEffects);
 
 		// Active prayers (positive) — one effect per prayer, lazily populated
 		ensurePrayerEffects();
@@ -287,6 +300,95 @@ public class PlayerFrameOverlay extends Overlay
 		}
 
 		return list;
+	}
+
+	// ── Varbit IDs for potion / spell effects (not all are in VarbitID) ──────
+	private static final int VARBIT_ANTIFIRE              = 3981;
+	private static final int VARBIT_SUPER_ANTIFIRE        = 6101;
+	private static final int VARBIT_DIVINE_SUPER_ATTACK   = 8429;
+	private static final int VARBIT_DIVINE_SUPER_STRENGTH = 8430;
+	private static final int VARBIT_DIVINE_SUPER_DEFENCE  = 8431;
+	private static final int VARBIT_DIVINE_RANGING        = 8432;
+	private static final int VARBIT_DIVINE_MAGIC          = 8433;
+	private static final int VARBIT_DIVINE_SUPER_COMBAT   = 13663;
+	private static final int VARBIT_DIVINE_BASTION        = 13664;
+	private static final int VARBIT_DIVINE_BATTLEMAGE     = 13665;
+	private static final int VARBIT_NMZ_OVERLOAD          = 3955;
+	private static final int VARBIT_COX_OVERLOAD          = 5418;
+	private static final int VARBIT_VENGEANCE_ACTIVE      = 2450;
+	private static final int VARBIT_MAGIC_IMBUE           = 5438;
+	private static final int VARBIT_GOADING_POTION        = 11294;
+	private static final int VARBIT_PRAYER_REGEN          = 11361;
+	private static final int VARBIT_MENAPHITE_REMEDY      = 14448;
+	private static final int VARBIT_LIQUID_ADRENALINE     = 14361;
+
+	// ── Colours for potion / spell effects ───────────────────────────────────
+	private static final Color CLR_ANTIFIRE       = new Color(220, 120,   0, 255);
+	private static final Color CLR_SUPER_ANTIFIRE = new Color(220,  60,   0, 255);
+	private static final Color CLR_DIVINE         = new Color(220, 180,  40, 255);
+	private static final Color CLR_OVERLOAD       = new Color(180,  40,  40, 255);
+	private static final Color CLR_VENGEANCE      = new Color(200,  50,  50, 255);
+	private static final Color CLR_MAGIC_IMBUE    = new Color( 80,  80, 200, 255);
+	private static final Color CLR_GOADING        = new Color(200, 140,  40, 255);
+	private static final Color CLR_PRAYER_REGEN   = new Color( 80, 200, 200, 255);
+	private static final Color CLR_MENAPHITE      = new Color( 60, 180, 140, 255);
+	private static final Color CLR_ADRENALINE     = new Color(180, 200,  40, 255);
+
+	private void initPotionEffects()
+	{
+		// Dragonfire protection
+		potionEffects.add(new VarbitTimerEffect(client, spriteManager,
+			VARBIT_ANTIFIRE, 30, "AFR", CLR_ANTIFIRE, -1));
+		potionEffects.add(new VarbitTimerEffect(client, spriteManager,
+			VARBIT_SUPER_ANTIFIRE, 20, "S.AFR", CLR_SUPER_ANTIFIRE, -1));
+
+		// Divine potions (value = raw ticks remaining)
+		potionEffects.add(new VarbitTimerEffect(client, spriteManager,
+			VARBIT_DIVINE_SUPER_ATTACK, 1, "D.ATK", CLR_DIVINE, SpriteID.SKILL_ATTACK));
+		potionEffects.add(new VarbitTimerEffect(client, spriteManager,
+			VARBIT_DIVINE_SUPER_STRENGTH, 1, "D.STR", CLR_DIVINE, SpriteID.SKILL_STRENGTH));
+		potionEffects.add(new VarbitTimerEffect(client, spriteManager,
+			VARBIT_DIVINE_SUPER_DEFENCE, 1, "D.DEF", CLR_DIVINE, SpriteID.SKILL_DEFENCE));
+		potionEffects.add(new VarbitTimerEffect(client, spriteManager,
+			VARBIT_DIVINE_RANGING, 1, "D.RNG", CLR_DIVINE, SpriteID.SKILL_RANGED));
+		potionEffects.add(new VarbitTimerEffect(client, spriteManager,
+			VARBIT_DIVINE_MAGIC, 1, "D.MAG", CLR_DIVINE, SpriteID.SKILL_MAGIC));
+		potionEffects.add(new VarbitTimerEffect(client, spriteManager,
+			VARBIT_DIVINE_SUPER_COMBAT, 1, "D.CMB", CLR_DIVINE, SpriteID.SKILL_ATTACK));
+		potionEffects.add(new VarbitTimerEffect(client, spriteManager,
+			VARBIT_DIVINE_BASTION, 1, "D.BAS", CLR_DIVINE, SpriteID.SKILL_RANGED));
+		potionEffects.add(new VarbitTimerEffect(client, spriteManager,
+			VARBIT_DIVINE_BATTLEMAGE, 1, "D.BAT", CLR_DIVINE, SpriteID.SKILL_MAGIC));
+
+		// Overloads (value = refreshes remaining, each refresh = 25 ticks)
+		potionEffects.add(new VarbitTimerEffect(client, spriteManager,
+			VARBIT_NMZ_OVERLOAD, 25, "OVL", CLR_OVERLOAD, -1));
+		potionEffects.add(new VarbitTimerEffect(client, spriteManager,
+			VARBIT_COX_OVERLOAD, 25, "OVL", CLR_OVERLOAD, -1));
+
+		// Vengeance (active flag, no timer)
+		potionEffects.add(new VarbitTimerEffect(client, spriteManager,
+			VARBIT_VENGEANCE_ACTIVE, 0, "VNG", CLR_VENGEANCE, -1));
+
+		// Magic Imbue (value × 10 = ticks)
+		potionEffects.add(new VarbitTimerEffect(client, spriteManager,
+			VARBIT_MAGIC_IMBUE, 10, "IMB", CLR_MAGIC_IMBUE, SpriteID.SKILL_MAGIC));
+
+		// Goading Potion (value × 6 = ticks)
+		potionEffects.add(new VarbitTimerEffect(client, spriteManager,
+			VARBIT_GOADING_POTION, 6, "GOD", CLR_GOADING, -1));
+
+		// Prayer Regeneration Potion (value × 12 = ticks)
+		potionEffects.add(new VarbitTimerEffect(client, spriteManager,
+			VARBIT_PRAYER_REGEN, 12, "P.RGN", CLR_PRAYER_REGEN, SpriteID.SKILL_PRAYER));
+
+		// Menaphite Remedy (value × 25 = ticks)
+		potionEffects.add(new VarbitTimerEffect(client, spriteManager,
+			VARBIT_MENAPHITE_REMEDY, 25, "MEN", CLR_MENAPHITE, -1));
+
+		// Liquid Adrenaline (active flag, no timer)
+		potionEffects.add(new VarbitTimerEffect(client, spriteManager,
+			VARBIT_LIQUID_ADRENALINE, 0, "ADR", CLR_ADRENALINE, SpriteID.MINIMAP_ORB_SPECIAL_ICON));
 	}
 
 	private void ensurePrayerEffects()
