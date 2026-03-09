@@ -22,16 +22,16 @@ public class SkillBoostEffect extends StatusEffect
 	private static final Color DRAIN_COLOR = new Color(255,  80,  80, 255);
 
 	private final Skill               skill;
-	private final Map<Skill, Integer> boosts;
+	private final int boost;
 	private final SpriteManager       spriteManager;
 
 	private BufferedImage cachedIcon;
 	private boolean       iconFetched;
 
-	public SkillBoostEffect(Skill skill, Map<Skill, Integer> boosts, SpriteManager spriteManager)
+	public SkillBoostEffect(Skill skill, int boost, SpriteManager spriteManager)
 	{
 		this.skill         = skill;
-		this.boosts        = boosts;
+		this.boost        = boost;
 		this.spriteManager = spriteManager;
 	}
 
@@ -40,7 +40,6 @@ public class SkillBoostEffect extends StatusEffect
 	@Override
 	public boolean isActive()
 	{
-		int boost = boosts.getOrDefault(skill, 0);
 		if (skill == Skill.PRAYER    && boost < 0) return false;
 		if (skill == Skill.HITPOINTS && boost < 0) return false;
 		return boost != 0;
@@ -49,20 +48,19 @@ public class SkillBoostEffect extends StatusEffect
 	@Override
 	public boolean isPositive()
 	{
-		return boosts.getOrDefault(skill, 0) > 0;
+		return boost > 0;
 	}
 
 	@Override
 	public String getDisplayValue()
 	{
-		int boost = boosts.getOrDefault(skill, 0);
 		return (boost >= 0 ? "+" : "") + boost;
 	}
 
 	@Override
 	public Color getColor()
 	{
-		return boosts.getOrDefault(skill, 0) >= 0 ? BOOST_COLOR : DRAIN_COLOR;
+		return boost >= 0 ? BOOST_COLOR : DRAIN_COLOR;
 	}
 
 	@Override
