@@ -1,8 +1,6 @@
-package com.mmoframes;
+package com.mmoframes.rendering;
 
-import com.mmoframes.rendering.BorderRenderer;
-import com.mmoframes.rendering.TextRenderer;
-import com.mmoframes.status.StatusEffect;
+import com.mmoframes.frame.domain.StatusEffect;
 import java.awt.Color;
 import java.awt.Font;
 import java.awt.FontMetrics;
@@ -17,7 +15,7 @@ import java.util.List;
  * Each frame shows (with icon):
  *   ┌──────────────┐
  *   │              │
- *   │  [ICON 24px] │  ← icon perfectly centred in the interior
+ *   │  [ICON 20px] │  ← icon perfectly centred in the interior
  *   │     +3       │  ← value overlaps icon bottom, scales to fit width
  *   └──────────────┘
  *
@@ -126,7 +124,6 @@ public final class StatusFrameRenderer
 			g.drawImage(icon, iconX, iconY, ICON_SIZE, ICON_SIZE, null);
 
 			// ── Value: overlaps the icon's bottom edge ───────────────────────
-			// Space below text-top: from (iconBottom - overlap) to interior bottom
 			int textTopY  = iconY + ICON_SIZE - TEXT_OVERLAP;
 			int textAreaH = (iy + ih) - textTopY;
 			Font font = scaledFont(g, textAreaH, availW, displayValue);

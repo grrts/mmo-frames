@@ -1,4 +1,4 @@
-package com.mmoframes;
+package com.mmoframes.frame.infrastructure;
 
 import javax.inject.Inject;
 import javax.inject.Singleton;
@@ -11,11 +11,11 @@ import net.runelite.client.callback.ClientThread;
 
 @Slf4j
 @Singleton
-public class ChatHeadService
+public class ChatHeadAdapter
 {
 	static final int SIZE = 48;
 
-	private static final int MODEL_ZOOM = 1500;
+	private static final int MODEL_ZOOM       = 1500;
 	private static final int MODEL_ROTATION_Z = 1900;
 	private static final int MODEL_ROTATION_X = 100;
 	private static final int CHATHEAD_IDLE_ANIM = 588;
@@ -38,14 +38,10 @@ public class ChatHeadService
 		clientThread.invokeLater(this::destroyWidget);
 	}
 
-	/**
-	 * Thread-safe — stores the desired screen position of the portrait inner area.
-	 * Called from the render thread each frame before the portrait is drawn.
-	 */
 	public void requestPosition(int screenX, int screenY)
 	{
-		pendingX  = screenX;
-		pendingY  = screenY;
+		pendingX = screenX;
+		pendingY = screenY;
 	}
 
 	public void onClientTick()
@@ -61,8 +57,17 @@ public class ChatHeadService
 		widget.revalidate();
 	}
 
+	public void recreate()
+	{
+		if (widget != null)
+		{
+			widget.setHidden(true);
+			widget.revalidate();
+			widget = null;
+		}
 
-	// -------------------------------------------------------------------------
+		createWidget();
+	}
 
 	private void createWidget()
 	{
@@ -71,10 +76,9 @@ public class ChatHeadService
 			return;
 		}
 
-		// ID FOR resizable modern layer
-		Widget parent = client.getWidget(164,66);
-
-		if (parent == null) {
+		Widget parent = client.getWidget(164, 66);
+		if (parent == null)
+		{
 			return;
 		}
 
@@ -97,22 +101,13 @@ public class ChatHeadService
 		widget.setXPositionMode(0);
 		widget.revalidate();
 
-		log.debug("ChatHeadService: widget created under parent gid={}", parent.getId());
-	}
-
-	public void recreate() {
-		if (widget != null) {
-			widget.setHidden(true);
-			widget.revalidate();
-			widget = null;
-		}
-
-		createWidget();
+		log.debug("ChatHeadAdapter: widget created under parent gid={}", parent.getId());
 	}
 
 	private void destroyWidget()
 	{
-		if (widget != null) {
+		if (widget != null)
+		{
 			widget.setHidden(true);
 			widget.revalidate();
 			widget = null;

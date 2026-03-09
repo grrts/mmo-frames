@@ -1,20 +1,10 @@
-package com.mmoframes;
+package com.mmoframes.frame.infrastructure;
 
 import java.util.EnumMap;
 import java.util.Map;
 import net.runelite.api.Client;
 import net.runelite.api.Prayer;
 
-/**
- * Static lookup table of OSRS prayer drain effects.
- *
- * Values sourced from the custom-vital-bars plugin's PrayerType enum. These are
- * the actual in-game drain effect values (approximately 3x the OSRS wiki
- * "drain rate" column).
- *
- * Drain interval formula:
- *   {@code drainInterval = max(1, (60 + 2 * prayerBonus) / totalDrainEffect)}
- */
 public final class PrayerDrainRates
 {
 	private static final Map<Prayer, Integer> DRAIN_EFFECT = new EnumMap<>(Prayer.class);
@@ -51,9 +41,6 @@ public final class PrayerDrainRates
 		DRAIN_EFFECT.put(Prayer.PIETY,                 24);
 		DRAIN_EFFECT.put(Prayer.RIGOUR,                24);
 		DRAIN_EFFECT.put(Prayer.AUGURY,                24);
-		// DEADEYE and MYSTIC_VIGOUR omitted: isPrayerActive() returns true
-		// for both the old (EAGLE_EYE/MYSTIC_MIGHT) and new name simultaneously,
-		// so including both would double the drain effect.
 
 		// Ruinous Powers
 		DRAIN_EFFECT.put(Prayer.RP_REJUVENATION,        4);
@@ -84,17 +71,11 @@ public final class PrayerDrainRates
 
 	private PrayerDrainRates() {}
 
-	/** Returns the drain effect for a single prayer, or 0 if unmapped. */
 	public static int getDrainEffect(Prayer prayer)
 	{
 		return DRAIN_EFFECT.getOrDefault(prayer, 0);
 	}
 
-	/**
-	 * Sums the drain effects of all currently active prayers.
-	 *
-	 * @return total drain effect, or 0 if no prayers are active
-	 */
 	public static int getTotalDrainEffect(Client client)
 	{
 		int total = 0;

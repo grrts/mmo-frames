@@ -1,10 +1,17 @@
 package com.mmoframes;
 
 import com.google.inject.Provides;
+import com.mmoframes.frame.application.PlayerFrameService;
+import com.mmoframes.frame.application.TargetFrameService;
+import com.mmoframes.frame.infrastructure.ActorRegistry;
+import com.mmoframes.frame.infrastructure.ChatHeadAdapter;
+import com.mmoframes.frame.infrastructure.FrameStore;
+import com.mmoframes.frame.infrastructure.listeners.GameEventListener;
+import com.mmoframes.frame.infrastructure.listeners.HitsplatListener;
+import com.mmoframes.rendering.PlayerFrameOverlay;
+import com.mmoframes.rendering.TargetFrameOverlay;
 import javax.inject.Inject;
 import lombok.extern.slf4j.Slf4j;
-import net.runelite.api.Client;
-import net.runelite.api.GameState;
 import net.runelite.api.events.ClientTick;
 import net.runelite.api.events.GameStateChanged;
 import net.runelite.api.events.GameTick;
@@ -28,24 +35,22 @@ import net.runelite.client.ui.overlay.OverlayManager;
 )
 public class MmoFramesPlugin extends Plugin
 {
-	@Inject private Client             client;
 	@Inject private OverlayManager     overlayManager;
 	@Inject private PlayerFrameOverlay playerFrameOverlay;
 	@Inject private TargetFrameOverlay targetFrameOverlay;
-	@Inject private PlayerService      playerService;
-	@Inject private TargetService      targetService;
-	@Inject private NpcTrackingService npcTrackingService;
-	@Inject private ChatHeadService    chatHeadService;
-
-	private GameState lastGameState = GameState.UNKNOWN;
+	@Inject private PlayerFrameService playerFrameService;
+	@Inject private TargetFrameService targetFrameService;
+	@Inject private ChatHeadAdapter    chatHeadAdapter;
+	@Inject private ActorRegistry      actorRegistry;
+	@Inject private FrameStore         frameStore;
+	@Inject private GameEventListener  gameEventListener;
+	@Inject private HitsplatListener   hitsplatListener;
 
 	@Override
 	protected void startUp()
 	{
-		playerService.startUp();
-		targetService.startUp();
-		npcTrackingService.startUp();
-		chatHeadService.startUp();
+		playerFrameService.startUp();
+		chatHeadAdapter.startUp();
 		overlayManager.add(playerFrameOverlay);
 		overlayManager.add(targetFrameOverlay);
 		log.info("MMO Frames started");
@@ -56,54 +61,34 @@ public class MmoFramesPlugin extends Plugin
 	{
 		overlayManager.remove(playerFrameOverlay);
 		overlayManager.remove(targetFrameOverlay);
-		chatHeadService.shutDown();
-		npcTrackingService.shutDown();
-		playerService.shutDown();
-		targetService.shutDown();
+		chatHeadAdapter.shutDown();
+		actorRegistry.clear();
+		frameStore.clear();
 		log.info("MMO Frames stopped");
-	}
-
-	@Subscribe
-	public void onGameStateChanged(GameStateChanged e)
-	{
-		GameState newState = e.getGameState();
-		if (newState == GameState.LOGGED_IN)
-		{
-			if (lastGameState == GameState.LOADING)
-			{
-				// Teleport / region change
-				playerService.resetForTeleport();
-				targetService.resetForTeleport();
-			}
-			else
-			{
-				// True login or world-hop
-				playerService.resetState();
-				targetService.resetState();
-			}
-
-			chatHeadService.recreate();
-		}
-		lastGameState = newState;
 	}
 
 	@Subscribe
 	public void onGameTick(GameTick tick)
 	{
-		playerService.onGameTick();
-		targetService.onGameTick();
+		gameEventListener.onGameTick();
+	}
+
+	@Subscribe
+	public void onGameStateChanged(GameStateChanged e)
+	{
+		gameEventListener.onGameStateChanged(e);
 	}
 
 	@Subscribe
 	public void onStatChanged(StatChanged event)
 	{
-		playerService.onStatChanged(event);
+		gameEventListener.onStatChanged(event);
 	}
 
 	@Subscribe
 	public void onHitsplatApplied(HitsplatApplied event)
 	{
-		npcTrackingService.onHitsplat(
+		hitsplatListener.onHitsplat(
 			event.getActor(),
 			event.getHitsplat().getHitsplatType(),
 			event.getHitsplat().getAmount()
@@ -113,13 +98,13 @@ public class MmoFramesPlugin extends Plugin
 	@Subscribe
 	public void onNpcDespawned(NpcDespawned event)
 	{
-		npcTrackingService.remove(event.getNpc());
+		hitsplatListener.onNpcDespawned(event.getNpc());
 	}
 
 	@Subscribe
 	public void onClientTick(ClientTick tick)
 	{
-		chatHeadService.onClientTick();
+		gameEventListener.onClientTick();
 	}
 
 	@Provides
