@@ -11,7 +11,7 @@ import net.runelite.client.game.SpriteManager;
  * Positive status effect shown on the player frame while a stamina potion is active.
  * Displays the run icon with the remaining buff duration in seconds.
  *
- * Buff duration is read from {@link VarbitID#STAMINA_DURATION} (game ticks × 0.6 s/tick).
+ * Buff duration is read from {@link VarbitID#STAMINA_DURATION} (units of 10 game ticks; value × 6 = seconds).
  * Active state is from {@link VarbitID#STAMINA_ACTIVE} (non-zero = active).
  */
 public class StaminaEffect extends StatusEffect
@@ -43,7 +43,7 @@ public class StaminaEffect extends StatusEffect
 	@Override
 	public String getDisplayValue()
 	{
-		int secs = (int) Math.ceil(client.getVarbitValue(VarbitID.STAMINA_DURATION) * 0.6);
+		int secs = (int) Math.ceil(client.getVarbitValue(VarbitID.STAMINA_DURATION) * 6.0);
 		return secs >= 60 ? (secs / 60) + "m" : secs + "s";
 	}
 

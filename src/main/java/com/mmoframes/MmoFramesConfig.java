@@ -89,7 +89,7 @@ public interface MmoFramesConfig extends Config
 
 	@Alpha
 	@ConfigItem(keyName = "colorHpHigh",  name = "HP High",       description = "HP bar colour > 50%",          section = colorSection, position = 0)
-	default Color colorHpHigh()  { return new Color(  0, 195,  75, 255); }
+	default Color colorHpHigh()  { return new Color(2, 182, 10, 255); }
 
 	@Alpha
 	@ConfigItem(keyName = "colorHpMid",   name = "HP Mid",        description = "HP bar colour 25–50%",         section = colorSection, position = 1)
@@ -101,7 +101,7 @@ public interface MmoFramesConfig extends Config
 
 	@Alpha
 	@ConfigItem(keyName = "colorPrayer",  name = "Prayer",        description = "Prayer bar colour",            section = colorSection, position = 3)
-	default Color colorPrayer()  { return new Color( 40, 130, 225, 255); }
+	default Color colorPrayer()  { return new Color(31, 224, 192, 255); }
 
 	@Alpha
 	@ConfigItem(keyName = "colorStamina", name = "Stamina / Run", description = "Run energy bar colour",        section = colorSection, position = 4)
@@ -109,5 +109,5 @@ public interface MmoFramesConfig extends Config
 
 	@Alpha
 	@ConfigItem(keyName = "colorSpec",    name = "Spec",          description = "Special attack bar / square colour (becomes gold at 100%)", section = colorSection, position = 5)
-	default Color colorSpec()    { return new Color(31, 224, 192, 255); }
+	default Color colorSpec()    { return new Color(0, 135, 244, 255); }
 }

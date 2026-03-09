@@ -46,4 +46,11 @@ public abstract class StatusEffect
 
 	/** Icon rendered above the value. Returns {@code null} when no icon is available. */
 	public BufferedImage getIcon() { return null; }
+
+	/**
+	 * Optional short label for the effect (e.g. "AFR", "VNG").
+	 * Shown in the no-icon layout above the display value.
+	 * Returns {@code null} by default.
+	 */
+	public String getLabel() { return null; }
 }
