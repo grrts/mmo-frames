@@ -80,8 +80,9 @@ public class MmoFramesPlugin extends Plugin
 				// True login or world-hop
 				playerService.resetState();
 				targetService.resetState();
-				chatHeadService.resetOnClientThread();
 			}
+
+			chatHeadService.recreate();
 		}
 		lastGameState = newState;
 	}
