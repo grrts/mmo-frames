@@ -1,0 +1,21 @@
+package com.mmoframes.frame.domain;
+
+public enum StatusEffectType
+{
+	// Debuffs
+	POISON,
+	VENOM,
+	NPC_POISON,
+	NPC_VENOM,
+	SKILL_DRAIN,
+
+	// Buffs
+	ANTIPOISON_IMMUNITY,
+	ANTIVENOM_IMMUNITY,
+	STAMINA,
+	VARBIT_TIMER,
+	ACTIVE_PRAYER,
+	TARGET_PRAYER,
+	SKILL_BOOST,
+	SLAYER_TASK
+}
