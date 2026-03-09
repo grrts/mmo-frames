@@ -137,12 +137,37 @@ public final class StatusFrameRenderer
 		}
 		else
 		{
-			// ── No icon: value centred in full interior ──────────────────────
-			Font font = scaledFont(g, ih, availW, displayValue);
-			FontMetrics fm = g.getFontMetrics(font);
-			int vx = ix + 2 + (availW - fm.stringWidth(displayValue)) / 2;
-			int vy = iy + (ih - fm.getHeight()) / 2 + fm.getAscent();
-			TextRenderer.shadow(g, displayValue, font, vx, vy, col);
+			String label = effect.getLabel();
+			boolean hasLabel = label != null && !label.isEmpty();
+			boolean hasValue = displayValue != null && !displayValue.isEmpty();
+
+			if (hasLabel && hasValue)
+			{
+				// ── No icon, label + value: label on top, value on bottom ────
+				int halfH = ih / 2;
+
+				Font labelFont = scaledFont(g, halfH, availW, label);
+				FontMetrics lfm = g.getFontMetrics(labelFont);
+				int lx = ix + 2 + (availW - lfm.stringWidth(label)) / 2;
+				int ly = iy + (halfH - lfm.getHeight()) / 2 + lfm.getAscent();
+				TextRenderer.shadow(g, label, labelFont, lx, ly, col);
+
+				Font valFont = scaledFont(g, halfH, availW, displayValue);
+				FontMetrics vfm = g.getFontMetrics(valFont);
+				int vx = ix + 2 + (availW - vfm.stringWidth(displayValue)) / 2;
+				int vy = iy + halfH + (halfH - vfm.getHeight()) / 2 + vfm.getAscent();
+				TextRenderer.shadow(g, displayValue, valFont, vx, vy, TextRenderer.TEXT_WHITE);
+			}
+			else
+			{
+				// ── No icon, single text: centred in full interior ────────────
+				String text = hasLabel ? label : displayValue;
+				Font font = scaledFont(g, ih, availW, text);
+				FontMetrics fm = g.getFontMetrics(font);
+				int vx = ix + 2 + (availW - fm.stringWidth(text)) / 2;
+				int vy = iy + (ih - fm.getHeight()) / 2 + fm.getAscent();
+				TextRenderer.shadow(g, text, font, vx, vy, col);
+			}
 		}
 	}
 
