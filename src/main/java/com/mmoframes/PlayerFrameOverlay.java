@@ -183,7 +183,7 @@ public class PlayerFrameOverlay extends Overlay
 		int overlayY = (int) Math.round(tx.getTranslateY());
 		// Portrait inner origin = overlay origin + (BORDER + PAD) + BORDER = 2*BORDER + PAD = 18
 		int innerOff = UnitFrameRenderer.BORDER * 2 + UnitFrameRenderer.PAD;
-		chatHeadService.requestPosition(overlayX + innerOff, overlayY + innerOff);
+		chatHeadService.requestPosition(overlayX + innerOff, overlayY + innerOff + 4);
 
 		// ── Main frame always at (0,0) — anchor is stable regardless of effects ─
 		UnitFrameRenderer.renderFrame(
@@ -202,7 +202,7 @@ public class PlayerFrameOverlay extends Overlay
 			showPrayer,
 			showStamina,
 			client.getVarbitValue(VarbitID.STAMINA_ACTIVE) != 0,
-			chatHeadService.getImage(), // captured chathead (or null → fallback letter)
+			null,
 			null,
 			pState,
 			healHp,

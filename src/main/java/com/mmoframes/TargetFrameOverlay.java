@@ -161,7 +161,7 @@ public class TargetFrameOverlay extends Overlay
 
 		if (target instanceof Player)
 		{
-			portrait = plugin.getTargetPortrait();
+			portrait = null;
 		}
 		else if (target instanceof NPC)
 		{
