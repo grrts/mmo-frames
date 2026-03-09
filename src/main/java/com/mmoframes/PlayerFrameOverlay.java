@@ -12,47 +12,29 @@ import java.awt.Color;
 import java.awt.Dimension;
 import java.awt.Graphics2D;
 import java.awt.geom.AffineTransform;
-import java.util.ArrayList;
 import java.util.List;
-import java.util.Map;
 import javax.inject.Inject;
 import net.runelite.api.Client;
 import net.runelite.api.GameState;
-import net.runelite.api.MenuEntry;
-import net.runelite.api.Prayer;
 import net.runelite.api.Skill;
-import net.runelite.api.gameval.InterfaceID;
 import net.runelite.api.gameval.VarPlayerID;
 import net.runelite.api.gameval.VarbitID;
-import net.runelite.api.widgets.Widget;
-import net.runelite.client.plugins.itemstats.Effect;
-import net.runelite.client.plugins.itemstats.ItemStatChangesService;
-import net.runelite.client.plugins.itemstats.StatChange;
-import java.awt.image.BufferedImage;
-import net.runelite.api.SpriteID;
-import net.runelite.client.game.AlternateSprites;
-import net.runelite.client.game.SpriteManager;
 import net.runelite.client.ui.overlay.Overlay;
-import net.runelite.client.util.ImageUtil;
 import net.runelite.client.ui.overlay.OverlayLayer;
 import net.runelite.client.ui.overlay.OverlayPosition;
 import net.runelite.client.ui.overlay.OverlayPriority;
 
 /**
- * Player unit frame overlay.
+ * Player unit frame overlay — thin composition shell.
  *
- * Stats source:
- *   HP / Prayer  → client.getBoostedSkillLevel / getRealSkillLevel
- *   Run energy   → client.getEnergy()                    (0–10000)
- *   Spec         → client.getVarpValue(VarPlayerID.SA_ENERGY) / 10  (0–100)
- *   Combat level → client.getLocalPlayer().getCombatLevel()
+ * Composes: buffs | frame | debuffs
+ * All data sourced from {@link PlayerService}.
  */
 public class PlayerFrameOverlay extends Overlay
 {
 	private final Client          client;
 	private final MmoFramesConfig config;
-	private final MmoFramesPlugin plugin;
-	private final SpriteManager   spriteManager;
+	private final PlayerService   playerService;
 	private final ChatHeadService chatHeadService;
 
 	// Optional — available only when the ItemStats plugin is active
@@ -80,13 +62,12 @@ public class PlayerFrameOverlay extends Overlay
 	private BufferedImage specBarIcon;
 
 	@Inject
-	public PlayerFrameOverlay(Client client, MmoFramesConfig config, MmoFramesPlugin plugin,
-		SpriteManager spriteManager, ChatHeadService chatHeadService)
+	public PlayerFrameOverlay(Client client, MmoFramesConfig config,
+		PlayerService playerService, ChatHeadService chatHeadService)
 	{
 		this.client          = client;
 		this.config          = config;
-		this.plugin          = plugin;
-		this.spriteManager   = spriteManager;
+		this.playerService   = playerService;
 		this.chatHeadService = chatHeadService;
 		this.playerPoisonEffect       = new PlayerPoisonEffect(client);
 		this.antipoisonImmunityEffect = new AntipoisonImmunityEffect(client);
@@ -109,6 +90,7 @@ public class PlayerFrameOverlay extends Overlay
 			return null;
 		}
 
+		// ── Read player stats ────────────────────────────────────────────────
 		int hp      = client.getBoostedSkillLevel(Skill.HITPOINTS);
 		int maxHp   = client.getRealSkillLevel(Skill.HITPOINTS);
 		int pray    = client.getBoostedSkillLevel(Skill.PRAYER);
@@ -132,67 +114,28 @@ public class PlayerFrameOverlay extends Overlay
 		int frameW = UnitFrameRenderer.calcFrameWidth(mainW, config.showSpecialAttack());
 		int frameH = UnitFrameRenderer.calcFrameHeight(showPrayer, showStamina);
 
-		// Feature 7: consumable hover — matches RuneLite StatusBars getRestoreValue exactly
-		int healHp = 0, healPrayer = 0;
-		if (itemStatChanges != null)
-		{
-			healHp     = getRestoreValue(Skill.HITPOINTS.getName());
-			healPrayer = getRestoreValue(Skill.PRAYER.getName());
-		}
+		// ── Consumable hover ─────────────────────────────────────────────────
+		int healHp     = playerService.getHealHp();
+		int healPrayer = playerService.getHealPrayer();
 
-		// ── Split status effects: positive (above) / negative (below) ──────────
-		List<StatusEffect> allEffects      = buildStatusEffects();
-		List<StatusEffect> positiveEffects = new ArrayList<>();
-		List<StatusEffect> negativeEffects = new ArrayList<>();
-		for (StatusEffect e : allEffects)
-		{
-			(e.isPositive() ? positiveEffects : negativeEffects).add(e);
-		}
+		// ── BUFFS (above) ────────────────────────────────────────────────────
+		List<StatusEffect> buffs   = playerService.getBuffs();
+		List<StatusEffect> debuffs = playerService.getDebuffs();
 
-		int aboveH = StatusFrameRenderer.calcHeight(positiveEffects);
-
-		// ── Positive effects ABOVE the frame — drawn at negative Y so the
-		//    main frame always stays at (0,0) regardless of which effects are active.
+		int aboveH = StatusFrameRenderer.calcHeight(buffs);
 		if (aboveH > 0)
 		{
-			StatusFrameRenderer.renderStatusEffects(g, positiveEffects, 0, -aboveH);
+			StatusFrameRenderer.renderStatusEffects(g, buffs, 0, -aboveH);
 		}
 
-		// ── HP bar icon: normal / poison / venom heart ───────────────────────
-		if (!hpAltIconsLoaded)
-		{
-			hpAltIconsLoaded = true;
-			hpIconPoison = ImageUtil.loadImageResource(AlternateSprites.class, AlternateSprites.POISON_HEART);
-			hpIconVenom  = ImageUtil.loadImageResource(AlternateSprites.class, AlternateSprites.VENOM_HEART);
-		}
-		if (hpIconNormal == null)
-		{
-			hpIconNormal = spriteManager.getSprite(SpriteID.MINIMAP_ORB_HITPOINTS_ICON, 0);
-		}
-		if (prayerBarIcon == null)
-		{
-			prayerBarIcon = spriteManager.getSprite(SpriteID.MINIMAP_ORB_PRAYER_ICON, 0);
-		}
-		if (specBarIcon == null)
-		{
-			specBarIcon = spriteManager.getSprite(SpriteID.MINIMAP_ORB_SPECIAL_ICON, 0);
-		}
-		int           pState = plugin.getPoisonState();
-		BufferedImage hpIcon = pState >= VENOM_THRESHOLD ? hpIconVenom
-		                     : pState > 0               ? hpIconPoison
-		                                                : hpIconNormal;
-
-		// ── Position the chat-head widget at the portrait inner area ─────────
-		// The overlay avoids painting over that area (portraitWidget=true), so the
-		// widget's pixels show through the hole left in the frame's interior fill.
+		// ── Position chat-head widget ────────────────────────────────────────
 		AffineTransform tx = g.getTransform();
 		int overlayX = (int) Math.round(tx.getTranslateX());
 		int overlayY = (int) Math.round(tx.getTranslateY());
-		// Portrait inner origin = overlay origin + (BORDER + PAD) + BORDER = 2*BORDER + PAD = 18
 		int innerOff = UnitFrameRenderer.BORDER * 2 + UnitFrameRenderer.PAD;
 		chatHeadService.requestPosition(overlayX + innerOff, overlayY + innerOff);
 
-		// ── Main frame always at (0,0) — anchor is stable regardless of effects ─
+		// ── FRAME ────────────────────────────────────────────────────────────
 		UnitFrameRenderer.renderFrame(
 			g,
 			mainW,
@@ -202,26 +145,26 @@ public class PlayerFrameOverlay extends Overlay
 			showPrayer ? pray : -1,  maxPray,
 			energy,
 			spec,
-			plugin.getHpRegenProgress(),
-			plugin.getPrayerDrainProgress(),
-			plugin.getSpecRegenProgress(),
+			playerService.getHpRegenProgress(),
+			playerService.getPrayerDrainProgress(),
+			playerService.getSpecRegenProgress(),
 			config,
 			showPrayer,
 			showStamina,
 			client.getVarbitValue(VarbitID.STAMINA_ACTIVE) != 0,
-			chatHeadService.getImage(), // captured chathead (or null → fallback letter)
+			chatHeadService.getImage(),
 			null,
-			pState,
+			playerService.getPoisonState(),
 			healHp,
 			healPrayer,
-			hpIcon,
-			prayerBarIcon,
-			specBarIcon
+			playerService.getHpIcon(),
+			playerService.getPrayerBarIcon(),
+			playerService.getSpecBarIcon()
 		);
 
-		// ── Negative effects below the frame ─────────────────────────────────
+		// ── DEBUFFS (below) ──────────────────────────────────────────────────
 		int belowH = StatusFrameRenderer.renderStatusEffects(
-			g, negativeEffects, 0, frameH);
+			g, debuffs, 0, frameH);
 
 		return new Dimension(frameW, frameH + belowH);
 	}
