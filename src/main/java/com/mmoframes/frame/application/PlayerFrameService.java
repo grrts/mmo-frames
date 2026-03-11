@@ -5,13 +5,14 @@ import com.mmoframes.frame.domain.Bar;
 import com.mmoframes.frame.domain.BarType;
 import com.mmoframes.frame.domain.Frame;
 import com.mmoframes.frame.domain.FrameType;
+import com.mmoframes.frame.domain.HitpointsBarType;
 import com.mmoframes.frame.domain.Portrait;
 import com.mmoframes.frame.domain.StatusEffect;
 import com.mmoframes.frame.domain.StatusEffectCategory;
 import com.mmoframes.frame.domain.StatusEffectType;
 import com.mmoframes.frame.infrastructure.FrameStore;
 import com.mmoframes.frame.infrastructure.HpRegenTimerService;
-import com.mmoframes.frame.infrastructure.IconService;
+import com.mmoframes.frame.infrastructure.IconResolver;
 import com.mmoframes.frame.infrastructure.PrayerDrainTimerService;
 import com.mmoframes.frame.infrastructure.SpecRegenTimerService;
 import static com.mmoframes.frame.application.EffectColors.*;
@@ -19,18 +20,17 @@ import static com.mmoframes.frame.application.TickConstants.*;
 import static com.mmoframes.frame.application.TrackedSkills.COMBAT_SKILLS;
 import java.awt.Color;
 import java.util.ArrayList;
-import java.util.Collections;
 import java.util.EnumMap;
-import java.util.List;
 import java.util.Map;
 import javax.inject.Inject;
 import javax.inject.Singleton;
+import lombok.Getter;
 import lombok.extern.slf4j.Slf4j;
+import net.runelite.api.Actor;
 import net.runelite.api.Client;
 import net.runelite.api.GameState;
 import net.runelite.api.Prayer;
 import net.runelite.api.Skill;
-import net.runelite.api.SpriteID;
 import net.runelite.api.events.StatChanged;
 import net.runelite.api.gameval.VarPlayerID;
 import net.runelite.api.gameval.VarbitID;
@@ -39,17 +39,24 @@ import net.runelite.api.gameval.VarbitID;
 @Singleton
 public class PlayerFrameService
 {
-	@Inject private Client                client;
-	@Inject private MmoFramesConfig       config;
-	@Inject private FrameStore            frameStore;
-	@Inject private IconService           iconService;
-	@Inject private HpRegenTimerService     hpRegenTimer;
-	@Inject private PrayerDrainTimerService prayerDrainTimer;
-	@Inject private SpecRegenTimerService   specRegenTimer;
-	@Inject private ConsumableHoverService consumableHoverService;
+	@Inject private Client                   client;
+	@Inject private MmoFramesConfig          config;
+	@Inject private FrameStore               frameStore;
+	@Inject private IconResolver             iconResolver;
+	@Inject private HpRegenTimerService      hpRegenTimer;
+	@Inject private PrayerDrainTimerService  prayerDrainTimer;
+	@Inject private SpecRegenTimerService    specRegenTimer;
 
+	@Getter private Frame playerFrame;
 	private Map<Skill, Integer> skillBoosts;
 	private int poisonState;
+	private Actor lastActor;
+
+	// ── Persistent bar objects ──────────────────────────────────────────
+	private final Bar hpBar        = new Bar();
+	private final Bar prayerBar    = new Bar();
+	private final Bar runEnergyBar = new Bar();
+	private final Bar specBar      = new Bar();
 
 	// =====================================================================
 	// Lifecycle
@@ -58,6 +65,17 @@ public class PlayerFrameService
 	public void startUp()
 	{
 		skillBoosts = new EnumMap<>(Skill.class);
+		playerFrame = new Frame();
+		playerFrame.setType(FrameType.PLAYER);
+		playerFrame.setPortrait(new Portrait());
+		playerFrame.setBars(new ArrayList<>());
+		playerFrame.setEffects(new ArrayList<>());
+
+		hpBar.setType(BarType.HP);
+		prayerBar.setType(BarType.PRAYER);
+		runEnergyBar.setType(BarType.RUN_ENERGY);
+		specBar.setType(BarType.SPEC);
+
 		resetState();
 	}
 
@@ -77,6 +95,23 @@ public class PlayerFrameService
 			return;
 		}
 
+		Actor localPlayer = client.getLocalPlayer();
+		if (localPlayer == null)
+		{
+			return;
+		}
+
+		// Re-register in FrameStore if actor reference changed (e.g. after login)
+		if (localPlayer != lastActor)
+		{
+			if (lastActor != null)
+			{
+				frameStore.remove(lastActor);
+			}
+			lastActor = localPlayer;
+			frameStore.put(localPlayer, playerFrame);
+		}
+
 		poisonState = client.getVarpValue(VarPlayerID.POISON);
 		hpRegenTimer.tick();
 		prayerDrainTimer.tick();
@@ -89,25 +124,16 @@ public class PlayerFrameService
 		int energy   = client.getEnergy();
 		int specRaw  = client.getVarpValue(VarPlayerID.SA_ENERGY);
 		int spec     = specRaw / 10;
-		String name  = client.getLocalPlayer().getName();
-		int level    = client.getLocalPlayer().getCombatLevel();
+		String name  = localPlayer.getName();
 
-		int healHp   = consumableHoverService.getHealHp();
-		int healPray = consumableHoverService.getHealPrayer();
+		playerFrame.setName(name != null ? name : "Unknown");
+		playerFrame.setLevel(localPlayer.getCombatLevel());
+		playerFrame.setShowName(config.showPlayerName());
+		playerFrame.setShowHpText(config.showPlayerHpText());
+		playerFrame.setFrameWidth(config.playerFrameWidth());
 
-		Frame frame = Frame.builder()
-			.type(FrameType.PLAYER)
-			.name(name != null ? name : "Unknown")
-			.level(level)
-			.portrait(new Portrait(null, null))
-			.bars(buildPlayerBars(hp, maxHp, pray, maxPray, energy, spec, healHp, healPray))
-			.effects(buildAllEffects())
-			.showName(config.showPlayerName())
-			.showHpText(config.showPlayerHpText())
-			.frameWidth(config.playerFrameWidth())
-			.build();
-
-		frameStore.put(FrameType.PLAYER, frame);
+		updateBars(hp, maxHp, pray, maxPray, energy, spec);
+		updateEffects();
 	}
 
 	public void onStatChanged(StatChanged event)
@@ -147,88 +173,64 @@ public class PlayerFrameService
 	}
 
 	// =====================================================================
-	// Bar builders
+	// Bar updates
 	// =====================================================================
 
-	private static final Color RESTORE_HP_COLOR   = new Color(216, 255, 139, 130);
-	private static final Color RESTORE_PRAY_COLOR = new Color(130, 180, 255, 130);
-
-	private List<Bar> buildPlayerBars(int hp, int maxHp, int pray, int maxPray,
-		int energy, int spec, int healHp, int healPray)
+	private void updateBars(int hp, int maxHp, int pray, int maxPray,
+		int energy, int spec)
 	{
-		List<Bar> bars = new ArrayList<>();
+		double hpFrac = maxHp > 0 ? Math.min(1.0, (double) hp / maxHp) : 0;
+		HitpointsBarType hpType = toHitpointsBarType(poisonState);
 
 		// HP bar (always present)
-		double hpFrac = maxHp > 0 ? Math.min(1.0, (double) hp / maxHp) : 0;
-		bars.add(Bar.builder()
-			.type(BarType.HP)
-			.current(hp)
-			.max(maxHp)
-			.sweepProgress(config.showHpRegenSweep() ? hpRegenTimer.getProgress() : 0)
-			.sweepLighten(true)
-			.hoverRestore(healHp)
-			.color(hpColor(hpFrac))
-			.hoverRestoreColor(healHp > 0 ? RESTORE_HP_COLOR : null)
-			.icon(iconService.getHpIcon(poisonState))
-			.poisonState(poisonState)
-			.build());
+		hpBar.setCurrent(hp);
+		hpBar.setMax(maxHp);
+		hpBar.setSweepProgress(config.showHpRegenSweep() ? hpRegenTimer.getProgress() : 0);
+		hpBar.setSweepLighten(true);
+		hpBar.setColor(hpColor(hpFrac));
+		hpBar.setHitpointsBarType(hpType);
+		hpBar.setIcon(iconResolver.resolve(hpBar));
 
-		// Prayer bar (config-gated)
+		// Rebuild bars list based on config
+		playerFrame.getBars().clear();
+		playerFrame.getBars().add(hpBar);
+
 		if (config.showPlayerPrayer())
 		{
-			bars.add(Bar.builder()
-				.type(BarType.PRAYER)
-				.current(pray)
-				.max(maxPray)
-				.sweepProgress(config.showPrayerDrainSweep() ? prayerDrainTimer.getProgress() : 0)
-				.sweepLighten(false)
-				.hoverRestore(healPray)
-				.color(config.colorPrayer())
-				.hoverRestoreColor(healPray > 0 ? RESTORE_PRAY_COLOR : null)
-				.icon(iconService.getPrayerBarIcon())
-				.poisonState(0)
-				.build());
+			prayerBar.setCurrent(pray);
+			prayerBar.setMax(maxPray);
+			prayerBar.setSweepProgress(config.showPrayerDrainSweep() ? prayerDrainTimer.getProgress() : 0);
+			prayerBar.setSweepLighten(false);
+			prayerBar.setColor(config.colorPrayer());
+			prayerBar.setIcon(iconResolver.resolve(prayerBar));
+			playerFrame.getBars().add(prayerBar);
 		}
 
-		// Run energy bar (config-gated)
 		if (config.showPlayerStamina())
 		{
-			bars.add(Bar.builder()
-				.type(BarType.RUN_ENERGY)
-				.current(energy)
-				.max(10000)
-				.sweepProgress(0)
-				.sweepLighten(true)
-				.hoverRestore(0)
-				.color(isStaminaActive() ? STAMINA : config.colorStamina())
-				.hoverRestoreColor(null)
-				.icon(null)
-				.poisonState(0)
-				.build());
+			runEnergyBar.setCurrent(energy);
+			runEnergyBar.setMax(10000);
+			runEnergyBar.setColor(isStaminaActive() ? STAMINA : config.colorStamina());
+			playerFrame.getBars().add(runEnergyBar);
 		}
 
-		// Spec bar (config-gated)
 		if (config.showSpecialAttack())
 		{
-			Color specColor = spec >= 100
-				? new Color(31, 224, 192, 255)
-				: config.colorSpec();
-
-			bars.add(Bar.builder()
-				.type(BarType.SPEC)
-				.current(spec)
-				.max(100)
-				.sweepProgress(config.showSpecRegenSweep() ? specRegenTimer.getProgress() : 0)
-				.sweepLighten(true)
-				.hoverRestore(0)
-				.color(specColor)
-				.hoverRestoreColor(null)
-				.icon(iconService.getSpecBarIcon())
-				.poisonState(0)
-				.build());
+			specBar.setCurrent(spec);
+			specBar.setMax(100);
+			specBar.setSweepProgress(config.showSpecRegenSweep() ? specRegenTimer.getProgress() : 0);
+			specBar.setSweepLighten(true);
+			specBar.setColor(spec >= 100 ? new Color(31, 224, 192, 255) : config.colorSpec());
+			specBar.setIcon(iconResolver.resolve(specBar));
+			playerFrame.getBars().add(specBar);
 		}
+	}
 
-		return bars;
+	private static HitpointsBarType toHitpointsBarType(int poisonState)
+	{
+		if (poisonState >= VENOM_THRESHOLD) return HitpointsBarType.VENOM;
+		if (poisonState > 0) return HitpointsBarType.POISON;
+		return HitpointsBarType.DEFAULT;
 	}
 
 	private Color hpColor(double frac)
@@ -244,70 +246,64 @@ public class PlayerFrameService
 	}
 
 	// =====================================================================
-	// Status effect builders
+	// Status effect updates
 	// =====================================================================
 
-	private List<StatusEffect> buildAllEffects()
+	private void updateEffects()
 	{
-		List<StatusEffect> effects = new ArrayList<>();
+		playerFrame.getEffects().clear();
 
 		// ── Buffs ────────────────────────────────────────────────────────────
-		StatusEffect antipoison = buildAntipoisonEffect();
-		if (antipoison != null) effects.add(antipoison);
-
-		StatusEffect stamina = buildStaminaEffect();
-		if (stamina != null) effects.add(stamina);
-
-		effects.addAll(buildVarbitTimerEffects());
-		effects.addAll(buildPrayerEffects());
+		addAntipoisonEffect();
+		addStaminaEffect();
+		addVarbitTimerEffects();
+		addPrayerEffects();
 
 		if (config.showSkillBoosts())
 		{
-			effects.addAll(buildSkillBoostEffects(StatusEffectCategory.BUFF));
+			addSkillBoostEffects(StatusEffectCategory.BUFF);
 		}
 
 		// ── Debuffs ──────────────────────────────────────────────────────────
-		StatusEffect poison = buildPoisonEffect();
-		if (poison != null) effects.add(poison);
+		addPoisonEffect();
 
 		if (config.showSkillBoosts())
 		{
-			effects.addAll(buildSkillBoostEffects(StatusEffectCategory.DEBUFF));
+			addSkillBoostEffects(StatusEffectCategory.DEBUFF);
 		}
-
-		return effects;
 	}
 
-	private StatusEffect buildPoisonEffect()
+	private void addPoisonEffect()
 	{
 		if (poisonState <= 0)
 		{
-			return null;
+			return;
 		}
 
 		boolean isVenom = poisonState >= VENOM_THRESHOLD;
+		StatusEffectType type = isVenom ? StatusEffectType.VENOM : StatusEffectType.POISON;
 		int damage = isVenom ? poisonState - VENOM_THRESHOLD : poisonState;
 
-		return StatusEffect.builder()
-			.type(isVenom ? StatusEffectType.VENOM : StatusEffectType.POISON)
-			.active(true)
-			.category(StatusEffectCategory.DEBUFF)
-			.displayValue(String.valueOf(damage))
-			.label(null)
-			.color(isVenom ? VENOM : POISON)
-			.icon(isVenom ? iconService.getVenomHeartIcon() : iconService.getPoisonHeartIcon())
-			.build();
+		StatusEffect effect = new StatusEffect();
+		effect.setType(type);
+		effect.setActive(true);
+		effect.setCategory(StatusEffectCategory.DEBUFF);
+		effect.setDisplayValue(String.valueOf(damage));
+		effect.setColor(isVenom ? VENOM : POISON);
+		effect.setIcon(iconResolver.resolve(type));
+		playerFrame.getEffects().add(effect);
 	}
 
-	private StatusEffect buildAntipoisonEffect()
+	private void addAntipoisonEffect()
 	{
 		int v = client.getVarpValue(VarPlayerID.POISON);
 		if (v >= 0)
 		{
-			return null;
+			return;
 		}
 
 		boolean isAntiVenom = v < ANTIVENOM_THRESHOLD;
+		StatusEffectType type = isAntiVenom ? StatusEffectType.ANTIVENOM_IMMUNITY : StatusEffectType.ANTIPOISON_IMMUNITY;
 		int secs;
 		if (isAntiVenom)
 		{
@@ -319,42 +315,38 @@ public class PlayerFrameService
 		}
 		String display = secs >= 60 ? (secs / 60) + "m" : secs + "s";
 
-		return StatusEffect.builder()
-			.type(isAntiVenom ? StatusEffectType.ANTIVENOM_IMMUNITY : StatusEffectType.ANTIPOISON_IMMUNITY)
-			.active(true)
-			.category(StatusEffectCategory.BUFF)
-			.displayValue(display)
-			.label(null)
-			.color(isAntiVenom ? ANTIVENOM : ANTIPOISON)
-			.icon(isAntiVenom ? iconService.getVenomHeartIcon() : iconService.getPoisonHeartIcon())
-			.build();
+		StatusEffect effect = new StatusEffect();
+		effect.setType(type);
+		effect.setActive(true);
+		effect.setCategory(StatusEffectCategory.BUFF);
+		effect.setDisplayValue(display);
+		effect.setColor(isAntiVenom ? ANTIVENOM : ANTIPOISON);
+		effect.setIcon(iconResolver.resolve(type));
+		playerFrame.getEffects().add(effect);
 	}
 
-	private StatusEffect buildStaminaEffect()
+	private void addStaminaEffect()
 	{
 		if (client.getVarbitValue(VarbitID.STAMINA_ACTIVE) == 0)
 		{
-			return null;
+			return;
 		}
 
 		int secs = (int) Math.ceil(client.getVarbitValue(VarbitID.STAMINA_DURATION) * 6.0);
 		String display = secs >= 60 ? (secs / 60) + "m" : secs + "s";
 
-		return StatusEffect.builder()
-			.type(StatusEffectType.STAMINA)
-			.active(true)
-			.category(StatusEffectCategory.BUFF)
-			.displayValue(display)
-			.label(null)
-			.color(EffectColors.STAMINA)
-			.icon(iconService.getSprite(SpriteID.MINIMAP_ORB_RUN_ICON))
-			.build();
+		StatusEffect effect = new StatusEffect();
+		effect.setType(StatusEffectType.STAMINA);
+		effect.setActive(true);
+		effect.setCategory(StatusEffectCategory.BUFF);
+		effect.setDisplayValue(display);
+		effect.setColor(EffectColors.STAMINA);
+		effect.setIcon(iconResolver.resolve(StatusEffectType.STAMINA));
+		playerFrame.getEffects().add(effect);
 	}
 
-	private List<StatusEffect> buildVarbitTimerEffects()
+	private void addVarbitTimerEffects()
 	{
-		List<StatusEffect> effects = new ArrayList<>();
-
 		for (VarbitTimerDef def : VarbitTimerDefs.ALL)
 		{
 			int raw = client.getVarbitValue(def.varbitId);
@@ -374,54 +366,48 @@ public class PlayerFrameService
 				display = secs >= 60 ? (secs / 60) + "m" : secs + "s";
 			}
 
-			effects.add(StatusEffect.builder()
-				.type(StatusEffectType.VARBIT_TIMER)
-				.active(true)
-				.category(StatusEffectCategory.BUFF)
-				.displayValue(display)
-				.label(def.label)
-				.color(def.color)
-				.icon(iconService.getSprite(def.spriteId))
-				.build());
+			StatusEffect effect = new StatusEffect();
+			effect.setType(StatusEffectType.VARBIT_TIMER);
+			effect.setActive(true);
+			effect.setCategory(StatusEffectCategory.BUFF);
+			effect.setDisplayValue(display);
+			effect.setLabel(def.label);
+			effect.setColor(def.color);
+			effect.setIcon(iconResolver.resolveSprite(def.spriteId));
+			playerFrame.getEffects().add(effect);
 		}
-
-		return effects;
 	}
 
-	private List<StatusEffect> buildPrayerEffects()
+	private void addPrayerEffects()
 	{
-		List<StatusEffect> effects = new ArrayList<>();
-
 		for (Prayer p : Prayer.values())
 		{
-			int spriteId = IconService.prayerSpriteId(p);
-			if (spriteId < 0 || !client.isPrayerActive(p))
+			if (!client.isPrayerActive(p))
 			{
 				continue;
 			}
 
-			effects.add(StatusEffect.builder()
-				.type(StatusEffectType.ACTIVE_PRAYER)
-				.active(true)
-				.category(StatusEffectCategory.BUFF)
-				.displayValue("")
-				.label(null)
-				.color(EffectColors.PRAYER_ACTIVE)
-				.icon(iconService.getPrayerIcon(p))
-				.build());
-		}
+			StatusEffect effect = new StatusEffect();
+			effect.setType(StatusEffectType.ACTIVE_PRAYER);
+			effect.setActive(true);
+			effect.setCategory(StatusEffectCategory.BUFF);
+			effect.setDisplayValue("");
+			effect.setColor(EffectColors.PRAYER_ACTIVE);
+			effect.setIcon(iconResolver.resolve(p));
 
-		return effects;
+			if (effect.getIcon() != null)
+			{
+				playerFrame.getEffects().add(effect);
+			}
+		}
 	}
 
-	private List<StatusEffect> buildSkillBoostEffects(StatusEffectCategory category)
+	private void addSkillBoostEffects(StatusEffectCategory category)
 	{
 		if (skillBoosts == null || skillBoosts.isEmpty())
 		{
-			return Collections.emptyList();
+			return;
 		}
-
-		List<StatusEffect> effects = new ArrayList<>();
 
 		for (Skill s : COMBAT_SKILLS)
 		{
@@ -433,30 +419,26 @@ public class PlayerFrameService
 
 			if (category == StatusEffectCategory.BUFF && boost > 0)
 			{
-				effects.add(StatusEffect.builder()
-					.type(StatusEffectType.SKILL_BOOST)
-					.active(true)
-					.category(StatusEffectCategory.BUFF)
-					.displayValue("+" + boost)
-					.label(null)
-					.color(BOOST)
-					.icon(iconService.getSkillIcon(s))
-					.build());
+				StatusEffect effect = new StatusEffect();
+				effect.setType(StatusEffectType.SKILL_BOOST);
+				effect.setActive(true);
+				effect.setCategory(StatusEffectCategory.BUFF);
+				effect.setDisplayValue("+" + boost);
+				effect.setColor(BOOST);
+				effect.setIcon(iconResolver.resolve(s));
+				playerFrame.getEffects().add(effect);
 			}
 			else if (category == StatusEffectCategory.DEBUFF && boost < 0)
 			{
-				effects.add(StatusEffect.builder()
-					.type(StatusEffectType.SKILL_DRAIN)
-					.active(true)
-					.category(StatusEffectCategory.DEBUFF)
-					.displayValue(String.valueOf(boost))
-					.label(null)
-					.color(DRAIN)
-					.icon(iconService.getSkillIcon(s))
-					.build());
+				StatusEffect effect = new StatusEffect();
+				effect.setType(StatusEffectType.SKILL_DRAIN);
+				effect.setActive(true);
+				effect.setCategory(StatusEffectCategory.DEBUFF);
+				effect.setDisplayValue(String.valueOf(boost));
+				effect.setColor(DRAIN);
+				effect.setIcon(iconResolver.resolve(s));
+				playerFrame.getEffects().add(effect);
 			}
 		}
-
-		return effects;
 	}
 }

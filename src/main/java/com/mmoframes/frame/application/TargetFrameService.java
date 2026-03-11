@@ -5,19 +5,16 @@ import com.mmoframes.frame.domain.Bar;
 import com.mmoframes.frame.domain.BarType;
 import com.mmoframes.frame.domain.Frame;
 import com.mmoframes.frame.domain.FrameType;
+import com.mmoframes.frame.domain.HitpointsBarType;
 import com.mmoframes.frame.domain.Portrait;
 import com.mmoframes.frame.domain.StatusEffect;
 import com.mmoframes.frame.domain.StatusEffectCategory;
 import com.mmoframes.frame.domain.StatusEffectType;
-import com.mmoframes.frame.infrastructure.ActorRegistry;
 import com.mmoframes.frame.infrastructure.FrameStore;
-import com.mmoframes.frame.infrastructure.IconService;
+import com.mmoframes.frame.infrastructure.IconResolver;
 import com.mmoframes.frame.infrastructure.NpcHealthLookup;
 import java.awt.Color;
-import java.awt.image.BufferedImage;
 import java.util.ArrayList;
-import java.util.Collections;
-import java.util.List;
 import java.util.regex.Pattern;
 import javax.inject.Inject;
 import javax.inject.Singleton;
@@ -30,6 +27,7 @@ import net.runelite.api.HeadIcon;
 import net.runelite.api.NPC;
 import net.runelite.api.NPCComposition;
 import net.runelite.api.Player;
+import net.runelite.api.SpriteID;
 import net.runelite.api.gameval.DBTableID;
 import net.runelite.api.gameval.VarPlayerID;
 
@@ -40,24 +38,50 @@ public class TargetFrameService
 	@Inject private Client          client;
 	@Inject private MmoFramesConfig config;
 	@Inject private FrameStore      frameStore;
-	@Inject private ActorRegistry   actorRegistry;
-	@Inject private IconService     iconService;
+	@Inject private IconResolver    iconResolver;
 	@Inject private NpcHealthLookup npcHealthLookup;
 
-	// ── Linger state ────────────────────────────────────────────────────────
+	// ── Persistent frame + bar ──────────────────────────────────────────
+	@Getter private Frame targetFrame;
+	private final Bar hpBar = new Bar();
+
+	// ── Linger state ────────────────────────────────────────────────────
 	@Getter private Actor lingerTarget;
 	private int lingerTicksRemaining;
+	private Actor lastActor;
 
-	// ── HP tracking ─────────────────────────────────────────────────────────
+	// ── HP tracking ─────────────────────────────────────────────────────
 	private int     lastRatio         = 0;
 	private int     lastHealthScale   = 0;
 	private Integer lastMaxHealth     = null;
 	private Actor   lastTrackedTarget = null;
 
-	// ── Slayer task pattern cache ───────────────────────────────────────────
+	// ── Slayer task pattern cache ───────────────────────────────────────
 	private int     cachedTaskRow = -2;
 	private Pattern cachedPattern = null;
 	private boolean cachedMatch   = false;
+
+	// =====================================================================
+	// Lifecycle
+	// =====================================================================
+
+	public void startUp()
+	{
+		targetFrame = new Frame();
+		targetFrame.setType(FrameType.TARGET);
+		targetFrame.setPortrait(new Portrait());
+		targetFrame.setBars(new ArrayList<>());
+		targetFrame.setEffects(new ArrayList<>());
+
+		hpBar.setType(BarType.HP);
+
+		resetState();
+	}
+
+	public void shutDown()
+	{
+		// nothing to clean up
+	}
 
 	// =====================================================================
 	// Event handlers
@@ -92,40 +116,43 @@ public class TargetFrameService
 			lingerTarget = null;
 		}
 
-		// Build frame if we have a target
+		// No target — remove from FrameStore
 		if (lingerTarget == null)
 		{
-			frameStore.remove(FrameType.NPC_TARGET);
-			frameStore.remove(FrameType.PLAYER_TARGET);
+			if (lastActor != null)
+			{
+				frameStore.remove(lastActor);
+				lastActor = null;
+			}
 			return;
 		}
 
-		FrameType type = lingerTarget instanceof Player ? FrameType.PLAYER_TARGET : FrameType.NPC_TARGET;
+		// Re-register in FrameStore if actor reference changed
+		if (lingerTarget != lastActor)
+		{
+			if (lastActor != null)
+			{
+				frameStore.remove(lastActor);
+			}
+			lastActor = lingerTarget;
+			frameStore.put(lingerTarget, targetFrame);
+		}
+
+		// Remove expired hitsplat effects
+		targetFrame.removeExpiredEffects();
+
+		// Mutate frame properties
 		String name = getTargetName();
 		int level = getTargetLevel();
-		Portrait portrait = buildPortrait(name, level);
 
-		Frame frame = Frame.builder()
-			.type(type)
-			.name(name)
-			.level(level)
-			.portrait(portrait)
-			.bars(Collections.emptyList())
-			.effects(buildEffects())
-			.showName(config.showTargetName())
-			.showHpText(config.showTargetHpText())
-			.frameWidth(config.targetFrameWidth())
-			.build();
+		targetFrame.setName(name);
+		targetFrame.setLevel(level);
+		targetFrame.setShowName(config.showTargetName());
+		targetFrame.setShowHpText(config.showTargetHpText());
+		targetFrame.setFrameWidth(config.targetFrameWidth());
 
-		frameStore.put(type, frame);
-		if (type == FrameType.PLAYER_TARGET)
-		{
-			frameStore.remove(FrameType.NPC_TARGET);
-		}
-		else
-		{
-			frameStore.remove(FrameType.PLAYER_TARGET);
-		}
+		updatePortrait(name, level);
+		updateEffects();
 	}
 
 	// =====================================================================
@@ -134,12 +161,7 @@ public class TargetFrameService
 
 	public Frame prepareForRender()
 	{
-		Frame base = frameStore.get(FrameType.PLAYER_TARGET);
-		if (base == null)
-		{
-			base = frameStore.get(FrameType.NPC_TARGET);
-		}
-		if (base == null)
+		if (lingerTarget == null)
 		{
 			return null;
 		}
@@ -153,30 +175,20 @@ public class TargetFrameService
 		int dispCur = getDisplayHp();
 		int dispMax = getDisplayMaxHp();
 
-		Bar hpBar = Bar.builder()
-			.type(BarType.HP)
-			.current(dispCur)
-			.max(dispMax)
-			.sweepProgress(0)
-			.sweepLighten(true)
-			.hoverRestore(0)
-			.color(hpColor(dispCur, dispMax))
-			.hoverRestoreColor(null)
-			.icon(iconService.getHpIcon(0))
-			.poisonState(0)
-			.build();
+		// Update HP bar in place
+		hpBar.setCurrent(dispCur);
+		hpBar.setMax(dispMax);
+		hpBar.setSweepProgress(0);
+		hpBar.setSweepLighten(true);
+		hpBar.setHitpointsBarType(HitpointsBarType.DEFAULT);
+		hpBar.setColor(hpColor(dispCur, dispMax));
+		hpBar.setIcon(iconResolver.resolve(hpBar));
 
-		return Frame.builder()
-			.type(base.getType())
-			.name(base.getName())
-			.level(base.getLevel())
-			.portrait(base.getPortrait())
-			.bars(Collections.singletonList(hpBar))
-			.effects(base.getEffects())
-			.showName(base.isShowName())
-			.showHpText(base.isShowHpText())
-			.frameWidth(base.getFrameWidth())
-			.build();
+		// Rebuild bars list
+		targetFrame.getBars().clear();
+		targetFrame.getBars().add(hpBar);
+
+		return targetFrame;
 	}
 
 	// =====================================================================
@@ -261,6 +273,12 @@ public class TargetFrameService
 		cachedTaskRow = -2;
 		cachedPattern = null;
 		cachedMatch = false;
+
+		if (lastActor != null)
+		{
+			frameStore.remove(lastActor);
+			lastActor = null;
+		}
 	}
 
 	public void resetForTeleport()
@@ -301,24 +319,28 @@ public class TargetFrameService
 	// Portrait
 	// =====================================================================
 
-	private Portrait buildPortrait(String name, int level)
+	private void updatePortrait(String name, int level)
 	{
+		Portrait portrait = targetFrame.getPortrait();
 		Actor target = lingerTarget;
-
-		Color bgColor = null;
-		String letter = null;
 
 		if (target instanceof NPC)
 		{
-			bgColor = npcPortraitColor(level);
+			portrait.setBackgroundColor(npcPortraitColor(level));
+		}
+		else
+		{
+			portrait.setBackgroundColor(null);
 		}
 
 		if (name != null && !name.isEmpty())
 		{
-			letter = String.valueOf(Character.toUpperCase(name.charAt(0)));
+			portrait.setFallbackLetter(String.valueOf(Character.toUpperCase(name.charAt(0))));
 		}
-
-		return new Portrait(bgColor, letter);
+		else
+		{
+			portrait.setFallbackLetter(null);
+		}
 	}
 
 	private static Color npcPortraitColor(int level)
@@ -334,42 +356,37 @@ public class TargetFrameService
 	// Status effects
 	// =====================================================================
 
-	private List<StatusEffect> buildEffects()
+	private void updateEffects()
 	{
-		List<StatusEffect> effects = new ArrayList<>();
+		// Keep hitsplat-sourced effects (POISON, VENOM) — they persist via addEffect from HitsplatListener
+		// Remove non-hitsplat effects that we'll rebuild
+		targetFrame.getEffects().removeIf(e ->
+			e.getType() != StatusEffectType.POISON && e.getType() != StatusEffectType.VENOM);
 
-		StatusEffect prayer = buildTargetPrayerEffect();
-		if (prayer != null) effects.add(prayer);
+		// Add prayer overhead effect
+		addTargetPrayerEffect();
 
-		StatusEffect slayer = buildSlayerTaskEffect();
-		if (slayer != null) effects.add(slayer);
-
-		Actor target = lingerTarget;
-		if (target != null)
-		{
-			effects.addAll(actorRegistry.getActiveEffects(target, iconService));
-		}
-
-		return effects;
+		// Add slayer task effect
+		addSlayerTaskEffect();
 	}
 
-	private StatusEffect buildTargetPrayerEffect()
+	private void addTargetPrayerEffect()
 	{
 		Actor target = lingerTarget;
 		if (target == null)
 		{
-			return null;
+			return;
 		}
 
-		BufferedImage icon = null;
 		boolean active = false;
+		java.awt.image.BufferedImage icon = null;
 
 		if (target instanceof Player)
 		{
 			HeadIcon headIcon = ((Player) target).getOverheadIcon();
 			if (headIcon != null)
 			{
-				icon = iconService.getHeadIconSprite(headIcon);
+				icon = iconResolver.resolve(headIcon);
 				active = true;
 			}
 		}
@@ -378,40 +395,40 @@ public class TargetFrameService
 			short[] ids = ((NPC) target).getOverheadSpriteIds();
 			if (ids != null && ids.length > 0 && ids[0] != 0)
 			{
-				icon = iconService.getNpcOverheadSprite(ids[0]);
+				icon = iconResolver.resolveNpcOverhead(ids[0]);
 				active = true;
 			}
 		}
 
 		if (!active)
 		{
-			return null;
+			return;
 		}
 
-		return StatusEffect.builder()
-			.type(StatusEffectType.TARGET_PRAYER)
-			.active(true)
-			.category(StatusEffectCategory.BUFF)
-			.displayValue("")
-			.label(null)
-			.color(EffectColors.PRAYER_ACTIVE)
-			.icon(icon)
-			.build();
+		StatusEffect effect = new StatusEffect();
+		effect.setType(StatusEffectType.TARGET_PRAYER);
+		effect.setActive(true);
+		effect.setCategory(StatusEffectCategory.BUFF);
+		effect.setDisplayValue("");
+		effect.setColor(EffectColors.PRAYER_ACTIVE);
+		effect.setIcon(icon);
+
+		targetFrame.addEffect(effect);
 	}
 
-	private StatusEffect buildSlayerTaskEffect()
+	private void addSlayerTaskEffect()
 	{
 		Actor target = lingerTarget;
 		if (!(target instanceof NPC))
 		{
-			return null;
+			return;
 		}
 
 		NPC npc = (NPC) target;
 		int taskRow = client.getVarpValue(VarPlayerID.SLAYER_TARGET);
 		if (taskRow <= 0)
 		{
-			return null;
+			return;
 		}
 
 		if (taskRow != cachedTaskRow)
@@ -424,18 +441,18 @@ public class TargetFrameService
 		int count = client.getVarpValue(VarPlayerID.SLAYER_COUNT);
 		if (!cachedMatch || count <= 0)
 		{
-			return null;
+			return;
 		}
 
-		return StatusEffect.builder()
-			.type(StatusEffectType.SLAYER_TASK)
-			.active(true)
-			.category(StatusEffectCategory.BUFF)
-			.displayValue(String.valueOf(count))
-			.label(null)
-			.color(EffectColors.SLAYER)
-			.icon(iconService.getSprite(net.runelite.api.SpriteID.SKILL_SLAYER))
-			.build();
+		StatusEffect effect = new StatusEffect();
+		effect.setType(StatusEffectType.SLAYER_TASK);
+		effect.setActive(true);
+		effect.setCategory(StatusEffectCategory.BUFF);
+		effect.setDisplayValue(String.valueOf(count));
+		effect.setColor(EffectColors.SLAYER);
+		effect.setIcon(iconResolver.resolveSprite(SpriteID.SKILL_SLAYER));
+
+		targetFrame.addEffect(effect);
 	}
 
 	private Pattern buildSlayerPattern(int taskRow)

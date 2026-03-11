@@ -1,11 +1,14 @@
 package com.mmoframes.rendering;
 
 import com.mmoframes.MmoFramesConfig;
+import com.mmoframes.frame.application.ConsumableHoverService;
+import com.mmoframes.frame.application.PlayerFrameService;
+import com.mmoframes.frame.domain.Bar;
+import com.mmoframes.frame.domain.BarType;
 import com.mmoframes.frame.domain.Frame;
-import com.mmoframes.frame.domain.FrameType;
 import com.mmoframes.frame.domain.StatusEffect;
 import com.mmoframes.frame.infrastructure.ChatHeadAdapter;
-import com.mmoframes.frame.infrastructure.FrameStore;
+import java.awt.Color;
 import java.awt.Dimension;
 import java.awt.Graphics2D;
 import java.awt.geom.AffineTransform;
@@ -22,23 +25,29 @@ import net.runelite.client.ui.overlay.OverlayPriority;
  * Player unit frame overlay — thin composition shell.
  *
  * Composes: buffs | frame | debuffs
- * All data sourced from {@link FrameStore}.
+ * All data sourced from {@link PlayerFrameService}.
  */
 public class PlayerFrameOverlay extends Overlay
 {
-	private final Client          client;
-	private final MmoFramesConfig config;
-	private final FrameStore      frameStore;
-	private final ChatHeadAdapter chatHeadAdapter;
+	private static final Color RESTORE_HP_COLOR   = new Color(216, 255, 139, 130);
+	private static final Color RESTORE_PRAY_COLOR = new Color(130, 180, 255, 130);
+
+	private final Client                client;
+	private final MmoFramesConfig       config;
+	private final PlayerFrameService    playerFrameService;
+	private final ChatHeadAdapter       chatHeadAdapter;
+	private final ConsumableHoverService consumableHoverService;
 
 	@Inject
 	public PlayerFrameOverlay(Client client, MmoFramesConfig config,
-		FrameStore frameStore, ChatHeadAdapter chatHeadAdapter)
+		PlayerFrameService playerFrameService, ChatHeadAdapter chatHeadAdapter,
+		ConsumableHoverService consumableHoverService)
 	{
-		this.client          = client;
-		this.config          = config;
-		this.frameStore      = frameStore;
-		this.chatHeadAdapter = chatHeadAdapter;
+		this.client                = client;
+		this.config                = config;
+		this.playerFrameService    = playerFrameService;
+		this.chatHeadAdapter       = chatHeadAdapter;
+		this.consumableHoverService = consumableHoverService;
 
 		setPosition(OverlayPosition.BOTTOM_LEFT);
 		setLayer(OverlayLayer.ABOVE_SCENE);
@@ -56,11 +65,13 @@ public class PlayerFrameOverlay extends Overlay
 			return null;
 		}
 
-		Frame frame = frameStore.get(FrameType.PLAYER);
+		Frame frame = playerFrameService.getPlayerFrame();
 		if (frame == null)
 		{
 			return null;
 		}
+
+		applyConsumableHover(frame);
 
 		int frameW = UnitFrameRenderer.calcFrameWidth(frame);
 		int frameH = UnitFrameRenderer.calcFrameHeight(frame);
@@ -87,6 +98,46 @@ public class PlayerFrameOverlay extends Overlay
 		List<StatusEffect> debuffs = frame.getDebuffs();
 		int belowH = StatusFrameRenderer.renderStatusEffects(g, debuffs, 0, frameH);
 
+		// ── Clear hover state after render ───────────────────────────────────
+		clearConsumableHover(frame);
+
 		return new Dimension(frameW, frameH + belowH);
+	}
+
+	private void applyConsumableHover(Frame frame)
+	{
+		int healHp   = consumableHoverService.getHealHp();
+		int healPray = consumableHoverService.getHealPrayer();
+
+		if (healHp == 0 && healPray == 0)
+		{
+			return;
+		}
+
+		for (Bar bar : frame.getBars())
+		{
+			if (bar.getType() == BarType.HP && healHp > 0)
+			{
+				bar.setHoverRestore(healHp);
+				bar.setHoverRestoreColor(RESTORE_HP_COLOR);
+			}
+			else if (bar.getType() == BarType.PRAYER && healPray > 0)
+			{
+				bar.setHoverRestore(healPray);
+				bar.setHoverRestoreColor(RESTORE_PRAY_COLOR);
+			}
+		}
+	}
+
+	private void clearConsumableHover(Frame frame)
+	{
+		for (Bar bar : frame.getBars())
+		{
+			if (bar.getHoverRestore() != 0)
+			{
+				bar.setHoverRestore(0);
+				bar.setHoverRestoreColor(null);
+			}
+		}
 	}
 }
