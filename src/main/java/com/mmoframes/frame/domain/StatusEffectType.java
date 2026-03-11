@@ -5,8 +5,6 @@ public enum StatusEffectType
 	// Debuffs
 	POISON,
 	VENOM,
-	NPC_POISON,
-	NPC_VENOM,
 	SKILL_DRAIN,
 
 	// Buffs

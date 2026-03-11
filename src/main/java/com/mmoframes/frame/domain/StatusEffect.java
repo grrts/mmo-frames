@@ -2,18 +2,17 @@ package com.mmoframes.frame.domain;
 
 import java.awt.Color;
 import java.awt.image.BufferedImage;
-import lombok.Builder;
-import lombok.Value;
+import lombok.Data;
 
-@Value
-@Builder
+@Data
 public class StatusEffect
 {
-	StatusEffectType type;
-	boolean active;
-	StatusEffectCategory category;
-	String displayValue;
-	String label;
-	Color color;
-	BufferedImage icon;
+	private StatusEffectType type;
+	private boolean active;
+	private StatusEffectCategory category;
+	private String displayValue;
+	private String label;
+	private Color color;
+	private BufferedImage icon;
+	private long expiresAtMs;
 }

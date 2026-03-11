@@ -1,24 +1,46 @@
 package com.mmoframes.frame.domain;
 
 import java.util.ArrayList;
-import java.util.Collections;
 import java.util.List;
-import lombok.Builder;
-import lombok.Value;
+import lombok.Data;
 
-@Value
-@Builder
+@Data
 public class Frame
 {
-	FrameType type;
-	String name;
-	int level;
-	Portrait portrait;
-	List<Bar> bars;
-	List<StatusEffect> effects;
-	boolean showName;
-	boolean showHpText;
-	int frameWidth;
+	private FrameType type;
+	private String name;
+	private int level;
+	private Portrait portrait;
+	private List<Bar> bars = new ArrayList<>();
+	private List<StatusEffect> effects = new ArrayList<>();
+	private boolean showName;
+	private boolean showHpText;
+	private int frameWidth;
+
+	// =====================================================================
+	// Effect management (domain logic)
+	// =====================================================================
+
+	public void addEffect(StatusEffect effect)
+	{
+		effects.removeIf(e -> e.getType() == effect.getType());
+		effects.add(effect);
+	}
+
+	public void removeEffect(StatusEffectType type)
+	{
+		effects.removeIf(e -> e.getType() == type);
+	}
+
+	public void removeExpiredEffects()
+	{
+		long now = System.currentTimeMillis();
+		effects.removeIf(e -> e.getExpiresAtMs() > 0 && now >= e.getExpiresAtMs());
+	}
+
+	// =====================================================================
+	// Queries
+	// =====================================================================
 
 	public boolean hasBar(BarType barType)
 	{

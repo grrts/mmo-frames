@@ -2,21 +2,19 @@ package com.mmoframes.frame.domain;
 
 import java.awt.Color;
 import java.awt.image.BufferedImage;
-import lombok.Builder;
-import lombok.Value;
+import lombok.Data;
 
-@Value
-@Builder
+@Data
 public class Bar
 {
-	BarType type;
-	int current;
-	int max;
-	double sweepProgress;
-	boolean sweepLighten;
-	int hoverRestore;
-	Color color;
-	Color hoverRestoreColor;
-	BufferedImage icon;
-	int poisonState;
+	private BarType type;
+	private int current;
+	private int max;
+	private double sweepProgress;
+	private boolean sweepLighten;
+	private int hoverRestore;
+	private Color color;
+	private Color hoverRestoreColor;
+	private BufferedImage icon;
+	private HitpointsBarType hitpointsBarType = HitpointsBarType.DEFAULT;
 }

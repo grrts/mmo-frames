@@ -1,28 +1,28 @@
 package com.mmoframes.frame.infrastructure;
 
 import com.mmoframes.frame.domain.Frame;
-import com.mmoframes.frame.domain.FrameType;
 import java.util.concurrent.ConcurrentHashMap;
 import javax.inject.Singleton;
+import net.runelite.api.Actor;
 
 @Singleton
 public class FrameStore
 {
-	private final ConcurrentHashMap<FrameType, Frame> frames = new ConcurrentHashMap<>();
+	private final ConcurrentHashMap<Actor, Frame> frames = new ConcurrentHashMap<>();
 
-	public Frame get(FrameType type)
+	public Frame get(Actor actor)
 	{
-		return frames.get(type);
+		return frames.get(actor);
 	}
 
-	public void put(FrameType type, Frame frame)
+	public void put(Actor actor, Frame frame)
 	{
-		frames.put(type, frame);
+		frames.put(actor, frame);
 	}
 
-	public void remove(FrameType type)
+	public void remove(Actor actor)
 	{
-		frames.remove(type);
+		frames.remove(actor);
 	}
 
 	public void clear()

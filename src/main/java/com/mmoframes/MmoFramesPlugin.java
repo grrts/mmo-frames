@@ -6,8 +6,12 @@ import com.mmoframes.frame.application.TargetFrameService;
 import com.mmoframes.frame.infrastructure.ActorRegistry;
 import com.mmoframes.frame.infrastructure.ChatHeadAdapter;
 import com.mmoframes.frame.infrastructure.FrameStore;
-import com.mmoframes.frame.infrastructure.listeners.GameEventListener;
+import com.mmoframes.frame.infrastructure.listeners.ActorLifecycleListener;
+import com.mmoframes.frame.infrastructure.listeners.ChatHeadListener;
 import com.mmoframes.frame.infrastructure.listeners.HitsplatListener;
+import com.mmoframes.frame.infrastructure.listeners.PlayerFrameListener;
+import com.mmoframes.frame.infrastructure.listeners.StatChangeListener;
+import com.mmoframes.frame.infrastructure.listeners.TargetFrameListener;
 import com.mmoframes.rendering.PlayerFrameOverlay;
 import com.mmoframes.rendering.TargetFrameOverlay;
 import javax.inject.Inject;
@@ -17,6 +21,9 @@ import net.runelite.api.events.GameStateChanged;
 import net.runelite.api.events.GameTick;
 import net.runelite.api.events.HitsplatApplied;
 import net.runelite.api.events.NpcDespawned;
+import net.runelite.api.events.NpcSpawned;
+import net.runelite.api.events.PlayerDespawned;
+import net.runelite.api.events.PlayerSpawned;
 import net.runelite.api.events.StatChanged;
 import net.runelite.client.config.ConfigManager;
 import net.runelite.client.eventbus.Subscribe;
@@ -35,21 +42,28 @@ import net.runelite.client.ui.overlay.OverlayManager;
 )
 public class MmoFramesPlugin extends Plugin
 {
-	@Inject private OverlayManager     overlayManager;
-	@Inject private PlayerFrameOverlay playerFrameOverlay;
-	@Inject private TargetFrameOverlay targetFrameOverlay;
-	@Inject private PlayerFrameService playerFrameService;
-	@Inject private TargetFrameService targetFrameService;
-	@Inject private ChatHeadAdapter    chatHeadAdapter;
-	@Inject private ActorRegistry      actorRegistry;
-	@Inject private FrameStore         frameStore;
-	@Inject private GameEventListener  gameEventListener;
-	@Inject private HitsplatListener   hitsplatListener;
+	@Inject private OverlayManager          overlayManager;
+	@Inject private PlayerFrameOverlay      playerFrameOverlay;
+	@Inject private TargetFrameOverlay      targetFrameOverlay;
+	@Inject private PlayerFrameService      playerFrameService;
+	@Inject private TargetFrameService      targetFrameService;
+	@Inject private ChatHeadAdapter         chatHeadAdapter;
+	@Inject private ActorRegistry           actorRegistry;
+	@Inject private FrameStore              frameStore;
+
+	// ── Listeners ────────────────────────────────────────────────────────
+	@Inject private PlayerFrameListener     playerFrameListener;
+	@Inject private TargetFrameListener     targetFrameListener;
+	@Inject private StatChangeListener      statChangeListener;
+	@Inject private ChatHeadListener        chatHeadListener;
+	@Inject private ActorLifecycleListener  actorLifecycleListener;
+	@Inject private HitsplatListener        hitsplatListener;
 
 	@Override
 	protected void startUp()
 	{
 		playerFrameService.startUp();
+		targetFrameService.startUp();
 		chatHeadAdapter.startUp();
 		overlayManager.add(playerFrameOverlay);
 		overlayManager.add(targetFrameOverlay);
@@ -62,28 +76,41 @@ public class MmoFramesPlugin extends Plugin
 		overlayManager.remove(playerFrameOverlay);
 		overlayManager.remove(targetFrameOverlay);
 		chatHeadAdapter.shutDown();
+		playerFrameService.shutDown();
+		targetFrameService.shutDown();
 		actorRegistry.clear();
 		frameStore.clear();
 		log.info("MMO Frames stopped");
 	}
 
+	// ── Game tick ────────────────────────────────────────────────────────
+
 	@Subscribe
 	public void onGameTick(GameTick tick)
 	{
-		gameEventListener.onGameTick();
+		playerFrameListener.onGameTick();
+		targetFrameListener.onGameTick();
 	}
+
+	// ── Game state changes ───────────────────────────────────────────────
 
 	@Subscribe
 	public void onGameStateChanged(GameStateChanged e)
 	{
-		gameEventListener.onGameStateChanged(e);
+		playerFrameListener.onGameStateChanged(e);
+		targetFrameListener.onGameStateChanged(e);
+		chatHeadListener.onGameStateChanged(e);
 	}
+
+	// ── Stat changes ─────────────────────────────────────────────────────
 
 	@Subscribe
 	public void onStatChanged(StatChanged event)
 	{
-		gameEventListener.onStatChanged(event);
+		statChangeListener.onStatChanged(event);
 	}
+
+	// ── Hitsplats ────────────────────────────────────────────────────────
 
 	@Subscribe
 	public void onHitsplatApplied(HitsplatApplied event)
@@ -95,17 +122,41 @@ public class MmoFramesPlugin extends Plugin
 		);
 	}
 
+	// ── Actor lifecycle ──────────────────────────────────────────────────
+
+	@Subscribe
+	public void onNpcSpawned(NpcSpawned event)
+	{
+		actorLifecycleListener.onActorSpawned(event.getNpc());
+	}
+
 	@Subscribe
 	public void onNpcDespawned(NpcDespawned event)
 	{
-		hitsplatListener.onNpcDespawned(event.getNpc());
+		actorLifecycleListener.onActorDespawned(event.getNpc());
 	}
+
+	@Subscribe
+	public void onPlayerSpawned(PlayerSpawned event)
+	{
+		actorLifecycleListener.onActorSpawned(event.getPlayer());
+	}
+
+	@Subscribe
+	public void onPlayerDespawned(PlayerDespawned event)
+	{
+		actorLifecycleListener.onActorDespawned(event.getPlayer());
+	}
+
+	// ── Client tick ──────────────────────────────────────────────────────
 
 	@Subscribe
 	public void onClientTick(ClientTick tick)
 	{
-		gameEventListener.onClientTick();
+		chatHeadListener.onClientTick();
 	}
+
+	// ── Config ───────────────────────────────────────────────────────────
 
 	@Provides
 	MmoFramesConfig provideConfig(ConfigManager configManager)
